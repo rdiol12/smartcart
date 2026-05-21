@@ -6,9 +6,18 @@ import db from "../utils/db.js";
 const router = Router();
 router.use(authenticateToken);
 
-router.get("/api/activity/feed", async (req, res) => {
+// Mounted at "/api/activity/feed" in server.js, so the route inside the
+// router is just "/". Previously this was also "/api/activity/feed", which
+// concatenated to "/api/activity/feed/api/activity/feed" — i.e. nothing on
+// the public surface ever reached this handler.
+router.get("/", async (req, res) => {
   const userId = req.userId;
-  const { action, from, to, limit = 50, offset = 0 } = req.query;
+  const { action, from, to } = req.query;
+  // Always parse with explicit radix and cap. Default 50, hard ceiling 100;
+  // a caller passing ?limit=999999999 used to be honored, which both OOMs
+  // the response and lets an attacker scrape the activity log cheaply.
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   try {
     const result = await db.query(
       `SELECT al.id, al.list_id, al.user_id, al.action, al.details, al.created_at,
@@ -23,14 +32,7 @@ router.get("/api/activity/feed", async (req, res) => {
          AND ($4::TIMESTAMPTZ IS NULL OR al.created_at <= $4::TIMESTAMPTZ)
        ORDER BY al.created_at DESC
        LIMIT $5 OFFSET $6`,
-      [
-        userId,
-        action || null,
-        from || null,
-        to || null,
-        parseInt(limit),
-        parseInt(offset),
-      ],
+      [userId, action || null, from || null, to || null, limit, offset],
     );
     return res.json({ activities: result.rows });
   } catch (err) {

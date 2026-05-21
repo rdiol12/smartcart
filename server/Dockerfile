@@ -23,8 +23,14 @@ ENV NODE_ENV=production
 # tini gives us real PID 1 signal handling (clean SIGTERM, no zombies).
 RUN apk upgrade --no-cache && apk add --no-cache tini
 
-COPY --from=builder /app/node_modules ./node_modules
+# Order matters: copy source first, then layer the builder's node_modules
+# on top. .dockerignore already excludes ./node_modules from the build
+# context, so the source copy below shouldn't bring one in — but if that
+# ever changes (someone removes the rule, a new dev forgets to set up
+# ignore), this ordering keeps the builder's compiled bcrypt authoritative
+# instead of being silently clobbered by a host-built one.
 COPY --chown=node:node . .
+COPY --from=builder /app/node_modules ./node_modules
 
 # Data dirs the running app writes to:
 #   /app/logs       — winston error.log + combined.log

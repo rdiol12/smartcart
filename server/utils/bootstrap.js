@@ -26,5 +26,48 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_refresh_rotations_rotated_at
       ON app2.refresh_rotations (rotated_at)
   `);
+
+  // Trigram index for ILIKE '%term%' product search. Without this, every
+  // /api/search query sequentially scans app.items — fine on a dev dataset,
+  // catastrophic on a real Israeli grocery catalog. CREATE EXTENSION needs
+  // CREATEROLE/SUPERUSER which most managed PGs grant to the owning role; if
+  // it fails (e.g. tighter perms) we log and continue — the server still
+  // works, search just stays slow.
+  try {
+    await db.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_items_name_trgm
+         ON app.items USING GIN (name gin_trgm_ops)`,
+    );
+  } catch (err) {
+    logger.warn("pg_trgm index skipped", { error: err.message });
+  }
+
+  // Idempotency guard for the daily price snapshot. snapshot_prices.js's
+  // INSERT now specifies ON CONFLICT (product_id, chain_id, recorded_at) —
+  // without this unique index the conflict target has nothing to match and
+  // the query throws. If the index can't be created (existing duplicates,
+  // for example), log loudly so the operator knows the snapshot will be
+  // unprotected against double runs.
+  try {
+    await db.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_price_history_per_snapshot
+         ON app.price_history (product_id, chain_id, recorded_at)`,
+    );
+  } catch (err) {
+    logger.warn("price_history unique index skipped", { error: err.message });
+  }
+
+  // app.items.image_url was missing from init.sql but selected by the barcode
+  // endpoint and rendered by half the frontend (Store, ProductPage,
+  // ListItemRow, ProductSearchForList). Result: every barcode lookup threw
+  // "column image_url does not exist", got swallowed by the catch, and the
+  // UI reported "product not found" for every scan. Add the column; once
+  // populated, the existing `image_url ? <img> : <placeholder>` branches
+  // become reachable.
+  await db.query(
+    `ALTER TABLE app.items ADD COLUMN IF NOT EXISTS image_url VARCHAR(500)`,
+  );
+
   logger.info("Schema bootstrap complete");
 }

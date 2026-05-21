@@ -6,7 +6,8 @@ import { logger } from "../utils/logger.js";
 import db from "../utils/db.js";
 import logActivity from "../utils/logActivity.js";
 import comparePrices from "../utils/priceCompare.js";
-import { addItem } from "../services/listItems.js";
+import { addItem, reorderItems } from "../services/listItems.js";
+import { messages } from "../utils/messages.js";
 
 const router = Router();
 router.use(authenticateToken);
@@ -36,10 +37,27 @@ router.param("itemId", intParam("itemId"));
  */
 router.get("/", async (req, res) => {
   try {
+    // item_count + member_count via grouped LEFT JOINs (same shape as the
+    // templates listing query). The frontend renders these straight into the
+    // list cards; without them every card said "undefined פריטים" /
+    // "undefined חברים" on first page load.
     const { rows } = await db.query(
-      `SELECT l.id, l.list_name, l.status, l.created_at, l.updated_at, lm.status AS role
+      `SELECT l.id, l.list_name, l.status, l.created_at, l.updated_at,
+              lm.status AS role,
+              COALESCE(li_count.item_count, 0)   AS item_count,
+              COALESCE(mem_count.member_count, 0) AS member_count
        FROM app.list l
        JOIN app.list_members lm ON lm.list_id = l.id
+       LEFT JOIN (
+         SELECT listid, COUNT(*)::int AS item_count
+         FROM app.list_items
+         GROUP BY listid
+       ) li_count ON li_count.listid = l.id
+       LEFT JOIN (
+         SELECT list_id, COUNT(*)::int AS member_count
+         FROM app.list_members
+         GROUP BY list_id
+       ) mem_count ON mem_count.list_id = l.id
        WHERE lm.user_id = $1
        ORDER BY l.updated_at DESC`,
       [req.userId],
@@ -154,7 +172,7 @@ router.post("/:id/items", async (req, res) => {
     }
     if (err.code === "IS_CHILD") {
       return res.status(403).json({
-        message: "ילדים חייבים לבקש אישור מההורים להוספת פריטים",
+        message: messages.child_cannot_add_item,
         isChild: true,
       });
     }
@@ -208,13 +226,15 @@ router.post("/:id/leave", async (req, res) => {
   const listId = req.params.id;
 
   try {
-    await assertMember(listId, req.userId);
-
+    // One query covers membership + role; mirrors the DELETE /:id pattern.
     const memberRes = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
     );
 
+    if (memberRes.rows.length === 0) {
+      return res.status(403).json({ message: "Not a member of this list" });
+    }
     if (memberRes.rows[0].status === "admin") {
       return res.status(403).json({
         message:
@@ -229,9 +249,6 @@ router.post("/:id/leave", async (req, res) => {
 
     return res.json({ success: true, message: "Left list successfully" });
   } catch (err) {
-    if (err.message === "Not a member") {
-      return res.status(403).json({ message: "Not a member of this list" });
-    }
     logger.error("Error leaving list", { error: err.message, stack: err.stack });
     return res.status(500).json({ message: "Error leaving list" });
   }
@@ -287,11 +304,103 @@ router.post("/:id/invite", async (req, res) => {
       [listId, inviteCode, req.userId],
     );
 
+    // The frontend route is `/join/:inviteCode` (App.jsx). The link used to
+    // say `/invite/:inviteCode`, which fell through to the home page via the
+    // SPA fallback — the invite UX shipped with two halves that didn't talk
+    // to each other.
     const host = process.env.FRONTEND_URL || "http://localhost:5173";
-    return res.json({ inviteLink: `${host}/invite/${inviteCode}` });
+    return res.json({ inviteLink: `${host}/join/${inviteCode}` });
   } catch (err) {
     logger.warn("Error creating invite", { error: err.message, stack: err.stack });
     return res.status(500).json({ message: "Error creating invite" });
+  }
+});
+
+/**
+ * POST /api/lists/join/:inviteCode
+ *
+ * Redeem an invite code: validate it (exists / active / not expired / not
+ * over its use cap), add the caller to the list as a member, and bump the
+ * use_count. Previously no consumer endpoint existed for the codes minted
+ * above — the entire invite/join flow was dead because the server had no
+ * route reading from app.list_invites. JoinList.jsx now hits this URL.
+ */
+router.post("/join/:inviteCode", async (req, res) => {
+  const { inviteCode } = req.params;
+  if (
+    typeof inviteCode !== "string" ||
+    !/^[A-Za-z0-9-]{1,128}$/.test(inviteCode)
+  ) {
+    return res.status(400).json({ message: "Invalid invite code" });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    // FOR UPDATE OF i — lock only the invite row, not the joined list row.
+    // The list row doesn't need protection here; locking it would block
+    // any other operation against the list during this transaction for no
+    // reason. Tiny perf nit on a low-traffic endpoint.
+    const inviteRes = await client.query(
+      `SELECT i.list_id, i.max_uses, i.use_count, i.is_active, i.expires_at,
+              l.list_name
+       FROM app.list_invites i
+       JOIN app.list l ON l.id = i.list_id
+       WHERE i.invite_code = $1
+       FOR UPDATE OF i`,
+      [inviteCode],
+    );
+    if (inviteRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Invite not found" });
+    }
+    const invite = inviteRes.rows[0];
+    if (!invite.is_active) {
+      await client.query("ROLLBACK");
+      return res.status(410).json({ message: "Invite is no longer active" });
+    }
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      await client.query("ROLLBACK");
+      return res.status(410).json({ message: "Invite has expired" });
+    }
+    if (
+      invite.max_uses != null &&
+      invite.use_count >= invite.max_uses
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(410).json({ message: "Invite has been used up" });
+    }
+
+    // Only bump use_count when the INSERT actually adds a new membership.
+    // Without this, the same user reloading the join page eats `max_uses`
+    // one redemption at a time — a single clumsy admin could exhaust a
+    // max_uses=5 invite with one user pressing refresh five times.
+    const inserted = await client.query(
+      `INSERT INTO app.list_members (list_id, user_id, status)
+       VALUES ($1, $2, 'member')
+       ON CONFLICT (list_id, user_id) DO NOTHING
+       RETURNING id`,
+      [invite.list_id, req.userId],
+    );
+
+    if (inserted.rowCount > 0) {
+      await client.query(
+        "UPDATE app.list_invites SET use_count = use_count + 1 WHERE invite_code = $1",
+        [inviteCode],
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({ listId: invite.list_id, listName: invite.list_name });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    logger.error("Error joining list via invite", {
+      error: err.message,
+      stack: err.stack,
+    });
+    return res.status(500).json({ message: "Error joining list" });
+  } finally {
+    client.release();
   }
 });
 
@@ -301,20 +410,42 @@ router.post("/:id/invite", async (req, res) => {
  */
 router.get("/:id/chat", async (req, res) => {
   const listId = req.params.id;
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Math.min(
+    Number.isInteger(limitRaw) && limitRaw > 0 ? limitRaw : 50,
+    100,
+  );
+  const beforeIdRaw = parseInt(req.query.before_id, 10);
+  const beforeId = Number.isInteger(beforeIdRaw) && beforeIdRaw > 0 ? beforeIdRaw : null;
 
   try {
     await assertMember(listId, req.userId);
+    // Cursor pagination on lc.id (monotonic). Fetch limit+1 to know if there
+    // are more older messages without an extra COUNT query.
+    const params = [listId];
+    let cursorClause = "";
+    if (beforeId !== null) {
+      params.push(beforeId);
+      cursorClause = ` AND lc.id < $${params.length}`;
+    }
+    params.push(limit + 1);
     const result = await db.query(
       `SELECT lc.id, lc.list_id AS "listId", lc.user_id AS "userId", u.first_name AS "firstName",
               lc.message, lc.created_at AS "createdAt"
        FROM app.list_chat lc
        JOIN app2.users u ON lc.user_id = u.id
-       WHERE lc.list_id = $1
-       ORDER BY lc.created_at DESC
-       LIMIT 50`,
-      [listId],
+       WHERE lc.list_id = $1${cursorClause}
+       ORDER BY lc.id DESC
+       LIMIT $${params.length}`,
+      params,
     );
-    return res.json({ messages: result.rows.reverse() });
+    const hasMore = result.rows.length > limit;
+    const page = hasMore ? result.rows.slice(0, limit) : result.rows;
+    // Client renders oldest-first.
+    const messages = page.slice().reverse();
+    // Cursor for fetching the next (older) page is the smallest id we returned.
+    const nextBeforeId = page.length > 0 ? page[page.length - 1].id : null;
+    return res.json({ messages, hasMore, nextBeforeId });
   } catch (err) {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
@@ -358,29 +489,13 @@ router.put("/:id/reorder", async (req, res) => {
   const listId = req.params.id;
   const { items } = req.body;
 
-  if (!items || !Array.isArray(items)) {
+  if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: "items array is required" });
   }
 
   try {
-    await assertMember(listId, req.userId);
-    const client = await db.connect();
-    try {
-      await client.query("BEGIN");
-      for (const item of items) {
-        await client.query(
-          "UPDATE app.list_items SET sort_order = $1 WHERE id = $2 AND listid = $3",
-          [item.sortOrder, item.itemId, listId],
-        );
-      }
-      await client.query("COMMIT");
-      res.json({ success: true });
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
+    await reorderItems({ listId, userId: req.userId, items });
+    res.json({ success: true });
   } catch (err) {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });

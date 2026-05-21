@@ -12,6 +12,27 @@ router.post("/", async (req, res) => {
   if (!token) return res.status(400).json({ message: "Token required" });
   try {
     const userId = req.userId;
+
+    // A push token uniquely identifies a device install. If we see this
+    // token already registered to a different user, log it loudly: that's
+    // either a legitimate re-login on a shared device, or an attacker who
+    // got hold of someone else's Expo token registering it on their own
+    // account to hijack notifications. The upsert still goes through (so
+    // the legit case keeps working) but the audit trail is recoverable
+    // from the warn log.
+    const existing = await db.query(
+      "SELECT user_id FROM app.push_tokens WHERE token = $1",
+      [token],
+    );
+    const prior = existing.rows[0]?.user_id;
+    if (prior && prior !== userId) {
+      logger.warn("Push token ownership transferred", {
+        priorUserId: prior,
+        newUserId: userId,
+        tokenPrefix: String(token).slice(0, 24),
+      });
+    }
+
     await db.query(
       `INSERT INTO app.push_tokens (user_id, token, platform)
        VALUES ($1, $2, $3)

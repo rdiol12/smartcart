@@ -131,7 +131,7 @@ const FamilySettings = () => {
               <input
                 type="password"
                 className="form-control sc-input"
-                placeholder="סיסמה (לפחות 4 תווים)..."
+                placeholder="סיסמה (לפחות 8 תווים)..."
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 dir="ltr"

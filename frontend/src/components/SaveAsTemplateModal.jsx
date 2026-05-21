@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import api from "../api";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const SaveAsTemplateModal = ({ show, onClose, listId }) => {
+  useBodyScrollLock(show);
   const [templateName, setTemplateName] = useState("");
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);

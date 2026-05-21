@@ -11,6 +11,12 @@ import { logger } from "./logger.js";
 async function snapshotPrices(db) {
   logger.info("[Price Snapshot] Running daily price snapshot");
 
+  // Explicit conflict target on (product_id, chain_id, recorded_at). The
+  // bare `ON CONFLICT DO NOTHING` form here used to silently insert
+  // duplicates when no constraint existed; the matching unique index is
+  // created best-effort in utils/bootstrap.js. If the index is missing
+  // this query throws — which is the right failure mode, since duplicate
+  // protection was the whole reason for the clause.
   const result = await db.query(`
     INSERT INTO app.price_history (product_id, chain_id, price, recorded_at)
     SELECT
@@ -21,11 +27,11 @@ async function snapshotPrices(db) {
     FROM app.prices p
     JOIN app.branches b ON b.id = p.branch_id
     WHERE p.price IS NOT NULL
-    ON CONFLICT DO NOTHING
+    ON CONFLICT (product_id, chain_id, recorded_at) DO NOTHING
     RETURNING id
   `);
   const inserted = result.rowCount || 0;
-  logger.info(`[Price Snapshot] Inserted ${inserted} price records`);
+  logger.info("[Price Snapshot] Inserted price records", { inserted });
 
   const cleanupResult = await db.query(`
     DELETE FROM app.price_history
@@ -33,7 +39,7 @@ async function snapshotPrices(db) {
     RETURNING id
   `);
   const cleaned = cleanupResult.rowCount || 0;
-  logger.info(`[Price Snapshot] Cleaned up ${cleaned} old records (>90 days)`);
+  logger.info("[Price Snapshot] Cleaned up old records (>90 days)", { cleaned });
 
   return { inserted, cleaned };
 }
@@ -44,9 +50,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   snapshotPrices(pool)
     .then(({ inserted, cleaned }) => {
-      logger.info(
-        `[Price Snapshot] Done. Inserted: ${inserted}, Cleaned: ${cleaned}`,
-      );
+      logger.info("[Price Snapshot] Done", { inserted, cleaned });
       return pool.end();
     })
     .then(() => process.exit(0))

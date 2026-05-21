@@ -1,14 +1,23 @@
-import React, { useState, useContext } from "react";
-import { AuthContext } from "../context/AuthContext";
+import React, { useState, useRef } from "react";
 import socket from "../socket";
 
 const ItemNoteEditor = ({ item, listId }) => {
-  const { user } = useContext(AuthContext);
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(item.note || "");
+  // Track the last value we actually emitted so onBlur (which fires
+  // immediately after Enter calls setEditing(false) and unmounts the input)
+  // doesn't double-emit the same update.
+  const lastEmittedRef = useRef(item.note || "");
 
   const handleSave = () => {
-    socket.emit("update_note", { itemId: item.id, listId, note, userId: user.id });
+    const trimmed = note;
+    if (trimmed === lastEmittedRef.current) {
+      setEditing(false);
+      return;
+    }
+    lastEmittedRef.current = trimmed;
+    // No userId — backend reads it from socket.user.id (JWT).
+    socket.emit("update_note", { itemId: item.id, listId, note: trimmed });
     setEditing(false);
   };
 

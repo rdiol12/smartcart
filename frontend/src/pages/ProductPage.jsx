@@ -4,6 +4,7 @@ import { AuthContext } from "../context/AuthContext";
 import api from "../api";
 import PriceHistoryChart from "../components/PriceHistoryChart";
 import { useNotify } from "../context/NotifyContext";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const ProductPage = () => {
   const { id } = useParams();
@@ -22,6 +23,8 @@ const ProductPage = () => {
   const [selectedListId, setSelectedListId] = useState(null);
   const [addingToList, setAddingToList] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+
+  useBodyScrollLock(showListModal);
 
   useEffect(() => {
     if (!product) {

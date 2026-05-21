@@ -17,7 +17,7 @@ Users build shared lists with their family or friends; the app shows the current
 
 | Layer    | Tech                                                       |
 | -------- | ---------------------------------------------------------- |
-| Frontend | React 18 + Vite, React Router, Socket.io-client, Chart.js  |
+| Frontend | React 19 + Vite, React Router, Socket.io-client, Chart.js  |
 | Backend  | Node.js (ESM) + Express, Socket.io, JWT auth, Resend email |
 | Database | PostgreSQL 16                                              |
 | Ingest   | `xml-stream-saxjs` streaming parser, Docker-based crawler  |
@@ -46,6 +46,17 @@ Users build shared lists with their family or friends; the app shows the current
 
 The data pipeline runs out-of-band from the API: `crawler.sh` downloads XML dumps from chain portals into `server/my_prices/<Chain>/`, then `node db/run-parser.js` walks those folders, streams each `PriceFull*.xml` through `parser.js`, and upserts items + prices into the `app` schema.
 
+### Database layout
+
+The DB is split across two schemas:
+
+- **`app`** — domain data the price pipeline owns. `items`, `prices`, `branches`, `chains`, `list`, `list_items`, `list_members`, `list_invites`, `list_chat`, `list_item_comments`, `activity_log`, `price_alerts`, `price_history`, `push_tokens`, `list_templates`, `template_items`.
+- **`app2`** — identity / auth state. `users`, `tokens`, `kid_requests`, `login_attempts`, `refresh_rotations`.
+
+The split is historical (auth tables were added after the price-feed schema was already in production) and most joins cross the boundary (`app.list_items JOIN app2.users`). It works, but every new query has to remember which schema each table lives in. Collapsing into one schema is on the long-term cleanup list.
+
+**Column naming in `app.list_items`** is inconsistent for historical reasons: the older columns (`addby`, `addat`, `updatedat`) are run-together identifiers, while newer ones (`paid_by`, `paid_at`, `note_by`, `checked_by`, `assigned_to`) use snake_case underscores. The DDL declares some of the older columns with mixed case (`listId`, `itemName`, `storeName`), but Postgres folds unquoted identifiers to lowercase so on disk and in every query they're just `listid`, `itemname`, `storename` — the mixed-case DDL is a lie. A rename is a multi-table migration plus a frontend pass, so for now: when adding a new column, use snake_case and reference the existing inconsistency in code review.
+
 ## Quick start
 
 Requires Docker Desktop and (optionally) Node.js 22+ for running outside containers.
@@ -65,7 +76,7 @@ docker compose up -d                       # starts postgres + pgAdmin + server 
 #   - Frontend:  http://localhost:5173
 ```
 
-The database is initialised from `server/database_schema.sql/init.sql` on first boot (mounted into the Postgres container as a `docker-entrypoint-initdb.d` script).
+The database is initialised from `server/db_init/init.sql` on first boot (mounted into the Postgres container as a `docker-entrypoint-initdb.d` script).
 
 ### Running locally without Docker
 
@@ -126,7 +137,7 @@ SmartCart/
 │   │   ├── run-parser.js       # walks my_prices/ folders
 │   │   ├── sortfolder.js       # dispatches Store vs Price files
 │   │   └── organizefiles.js    # post-process file moves
-│   ├── database_schema.sql/
+│   ├── db_init/
 │   │   └── init.sql            # full schema (app + app2)
 │   ├── routes/                 # auth, family, lists, products, price_alerts, socket, token
 │   ├── middleware/auth.js      # JWT verification
@@ -144,10 +155,12 @@ SmartCart/
 
 ## Database schemas
 
-- `app` — pricing data (`chains`, `sub_chains`, `branches`, `items`, `prices`) and shopping-list tables (`list`, `list_items`, `list_members`, `list_invites`, `list_templates`, `template_items`, `list_item_comments`, `list_users`).
-- `app2` — authentication and store API (`users`, `tokens`, `chains`, `branches`, `items`, `prices`, `kid_requests`).
+- `app` — pricing data (`chains`, `sub_chains`, `branches`, `items`, `prices`, `price_history`) and shopping-list tables (`list`, `list_items`, `list_members`, `list_invites`, `list_templates`, `template_items`, `list_item_comments`, `list_chat`, `push_tokens`, `price_alerts`, `activity_log`).
+- `app2` — authentication and family (`users`, `tokens`, `kid_requests`, plus the runtime-bootstrapped `login_attempts` and `refresh_rotations`).
 
-Full DDL lives in [`server/database_schema.sql/init.sql`](server/database_schema.sql/init.sql).
+The DDL also declares `app.list_users` and `app.template_schedules` and an `app2.chains/branches/items/prices` quartet — none of those are referenced by any code path and they're effectively dead. Cleaning them up is on the schema-migration list.
+
+Full DDL lives in [`server/db_init/init.sql`](server/db_init/init.sql).
 
 ## Configuration
 
@@ -203,10 +216,14 @@ Consumed directly by the Node process and by `crawler.sh` / `crawl.ps1`.
 
 **Auth (JWT)**
 
+All four are required. Server startup fails fast if any of them are missing.
+
 | Variable              | Example                                | Notes                                                                                              |
 | --------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `JWT_SECRET`          | 64-byte hex string                     | Signs short-lived access tokens. Generate with `openssl rand -hex 64`.                             |
 | `JWT_REFRESH_SECRET`  | 64-byte hex string                     | Signs the refresh-token cookie. Use a **different** value from `JWT_SECRET`.                       |
+| `JWT_EMAIL_SECRET`    | 64-byte hex string                     | Signs the one-time email-verification link sent on `/api/register`. Different from the others.    |
+| `JWT_RESET_SECRET`    | 64-byte hex string                     | Signs the password-reset link sent on `/api/forgot-password`. Different from the others.          |
 
 **Email (Resend)**
 

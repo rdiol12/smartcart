@@ -2,7 +2,7 @@ import React, {
   createContext,
   useContext,
   useState,
-  useCallback,
+  useMemo,
   useRef,
 } from "react";
 
@@ -22,13 +22,24 @@ export function NotifyProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
 
-  const notify = useCallback((value, type = "error", durationMs = 5000) => {
-    const id = ++idRef.current;
-    const message = extractMessage(value);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, durationMs);
+  // Expose both `notify(message, type)` (positional, existing callers) and
+  // `notify.error / notify.success / notify.info` (named, clearer for new
+  // callers). The function-with-methods shape keeps backwards compatibility
+  // for the ~15 existing call sites while giving future callers a less
+  // ambiguous API.
+  const notify = useMemo(() => {
+    const fn = (value, type = "error", durationMs = 5000) => {
+      const id = ++idRef.current;
+      const message = extractMessage(value);
+      setToasts((prev) => [...prev, { id, message, type }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, durationMs);
+    };
+    fn.error = (value, durationMs) => fn(value, "error", durationMs);
+    fn.success = (value, durationMs) => fn(value, "success", durationMs);
+    fn.info = (value, durationMs) => fn(value, "info", durationMs);
+    return fn;
   }, []);
 
   return (

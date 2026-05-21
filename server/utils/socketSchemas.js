@@ -7,71 +7,111 @@ const id = z.coerce.number().int().positive();
 const nullableId = z.coerce.number().int().positive().nullable();
 const num = z.coerce.number();
 
-// One schema per socket event. Keep field names matching what the client sends.
-export const joinListSchema = id;
+// Stamp the schema with its event name so parseSocketPayload's failure log
+// can identify which event the bad payload came from. Without this every
+// validation-failure log said `event=?` — useless when triaging.
+function named(eventName, schema) {
+  schema._eventName = eventName;
+  return schema;
+}
 
-export const sendItemSchema = z.object({
-  listId: id,
-  itemName: z.string().trim().min(1).max(200),
-  price: num.nonnegative().nullable().optional(),
-  storeName: z.string().max(100).nullable().optional(),
-  quantity: num.positive().max(9999).nullable().optional(),
-  productId: nullableId.optional(),
-});
+export const joinListSchema = named("join_list", id);
 
-export const toggleItemSchema = z.object({
-  itemId: id,
-  listId: id,
-  isChecked: z.boolean(),
-});
+export const sendItemSchema = named(
+  "send_item",
+  z.object({
+    listId: id,
+    itemName: z.string().trim().min(1).max(200),
+    price: num.nonnegative().nullable().optional(),
+    storeName: z.string().max(100).nullable().optional(),
+    quantity: num.positive().max(9999).nullable().optional(),
+    productId: nullableId.optional(),
+  }),
+);
 
-export const deleteItemSchema = z.object({
-  itemId: id,
-  listId: id,
-});
+export const toggleItemSchema = named(
+  "toggle_item",
+  z.object({
+    itemId: id,
+    listId: id,
+    isChecked: z.boolean(),
+  }),
+);
 
-export const markPaidSchema = z.object({
-  itemId: id,
-  listId: id,
-});
+export const deleteItemSchema = named(
+  "delete_item",
+  z.object({
+    itemId: id,
+    listId: id,
+  }),
+);
 
-export const updateQuantitySchema = z.object({
-  itemId: id,
-  listId: id,
-  quantity: num.positive().max(9999),
-});
+export const markPaidSchema = named(
+  "mark_paid",
+  z.object({
+    itemId: id,
+    listId: id,
+  }),
+);
 
-export const updateNoteSchema = z.object({
-  itemId: id,
-  listId: id,
-  note: z.string().max(1000).nullable(),
-});
+export const updateQuantitySchema = named(
+  "update_quantity",
+  z.object({
+    itemId: id,
+    listId: id,
+    quantity: num.positive().max(9999),
+  }),
+);
 
-export const createListSchema = z.object({
-  list_name: z.string().trim().min(1).max(200),
-});
+export const updateNoteSchema = named(
+  "update_note",
+  z.object({
+    itemId: id,
+    listId: id,
+    note: z.string().max(1000).nullable(),
+  }),
+);
 
-export const addCommentSchema = z.object({
-  itemId: id,
-  listId: id,
-  comment: z.string().trim().min(1).max(1000),
-});
+export const createListSchema = named(
+  "create_list",
+  z.object({
+    list_name: z.string().trim().min(1).max(200),
+  }),
+);
 
-export const sendChatMessageSchema = z.object({
-  listId: id,
-  message: z.string().trim().min(1).max(2000),
-});
+export const addCommentSchema = named(
+  "add_comment",
+  z.object({
+    itemId: id,
+    listId: id,
+    comment: z.string().trim().min(1).max(1000),
+  }),
+);
 
-export const assignItemSchema = z.object({
-  itemId: id,
-  listId: id,
-  assignedTo: nullableId,
-});
+export const sendChatMessageSchema = named(
+  "send_chat_message",
+  z.object({
+    listId: id,
+    message: z.string().trim().min(1).max(2000),
+  }),
+);
 
-export const reorderItemsSchema = z.object({
-  listId: id,
-  items: z
-    .array(z.object({ itemId: id, sortOrder: num.int() }))
-    .min(1)
-    .max(1000),
-});
+export const assignItemSchema = named(
+  "assign_item",
+  z.object({
+    itemId: id,
+    listId: id,
+    assignedTo: nullableId,
+  }),
+);
+
+export const reorderItemsSchema = named(
+  "reorder_items",
+  z.object({
+    listId: id,
+    items: z
+      .array(z.object({ itemId: id, sortOrder: num.int() }))
+      .min(1)
+      .max(1000),
+  }),
+);

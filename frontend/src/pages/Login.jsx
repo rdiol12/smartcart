@@ -2,7 +2,6 @@ import React, { useState, useContext } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api, { setAccessToken } from "../api";
 import { AuthContext } from "../context/AuthContext";
-import socket from "../socket";
 
 const Login = () => {
   const { setUser } = useContext(AuthContext);
@@ -25,22 +24,33 @@ const Login = () => {
       setError("יש להזין סיסמה");
       return;
     }
-    if (password.length < 6) {
-      setError("סיסמה שגויה");
+    // Backend's minimum is 8. The client-side guard used to say `< 6` and
+    // returned "wrong password" on 6-7 char attempts, which is a lie — the
+    // request would never reach the server. Match the backend and tell the
+    // user what's actually wrong.
+    if (password.length < 8) {
+      setError("הסיסמה חייבת להיות באורך 8 תווים לפחות");
       return;
     }
 
     setLoading(true);
     try {
-      const isEmail = loginId.includes("@");
-      const body = isEmail
+      // Route by full-shape email check, not .includes("@"). The schema
+      // doesn't forbid `@` in usernames, so "joe@home" used to land on the
+      // email branch and get rejected by the server-side isEmail validator
+      // — login impossible for that user. Simple HTML5-ish pattern is
+      // enough to distinguish "looks like an email" from "is a username".
+      const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginId);
+      const body = looksLikeEmail
         ? { email: loginId, password }
         : { username: loginId, password };
       const res = await api.post("/api/login", body);
       setAccessToken(res.data.accessToken);
+      // setUser triggers AuthContext's [user] effect which attaches socket.auth
+      // and connects. Don't duplicate that here; previously this page set
+      // socket.auth + socket.connect inline, contradicting AuthContext's
+      // comment that it's the single source of truth for the socket lifecycle.
       setUser(res.data.user);
-      socket.auth = { token: res.data.accessToken };
-      socket.connect();
       navigate("/");
     } catch (err) {
       const message = err.response?.data?.message;
@@ -117,6 +127,7 @@ const Login = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              dir="ltr"
             />
           </div>
 

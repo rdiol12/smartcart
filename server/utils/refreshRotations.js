@@ -36,10 +36,15 @@ export async function wasRecentlyRotated(oldTokenId) {
 }
 
 export async function recordRotation(oldTokenId) {
+  // DO NOTHING (not DO UPDATE SET rotated_at = NOW()) on conflict. payload.jti
+  // is supposed to be fresh on every refresh, so re-recording the same old
+  // jti shouldn't happen — but if it ever does (clock skew, retry storm),
+  // a DO UPDATE would slide the grace window indefinitely. DO NOTHING keeps
+  // the original rotation timestamp authoritative.
   await db.query(
     `INSERT INTO app2.refresh_rotations (old_token_id, rotated_at)
      VALUES ($1, NOW())
-     ON CONFLICT (old_token_id) DO UPDATE SET rotated_at = NOW()`,
+     ON CONFLICT (old_token_id) DO NOTHING`,
     [oldTokenId],
   );
 }

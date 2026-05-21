@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL } from "../api";
 import axios from "axios";
 
@@ -12,6 +11,7 @@ function ResetPassword() {
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
@@ -22,76 +22,92 @@ function ResetPassword() {
     setError("");
 
     if (!token) {
-      setError("Error");
+      setError("קישור איפוס הסיסמה חסר או פגום");
       return;
     }
 
     if (newPassword !== confirmNewPassword) {
-      setError("Passwords do not match");
+      setError("הסיסמאות אינן תואמות");
       return;
     }
 
     if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters");
+      setError("הסיסמה חייבת להיות באורך 8 תווים לפחות");
       return;
     }
-    //to send for server
+
+    setSaving(true);
     try {
       const response = await axios.post(`${API_URL}/api/reset-password`, {
         token,
         newPassword,
         confirmNewPassword,
       });
-      setMessage(response.data.message);
+      // Show the success state for a moment so the user actually sees it
+      // before we kick them to /login. Previously navigate ran synchronously
+      // right after setMessage, so the success alert never rendered.
+      setMessage(response.data?.message || "הסיסמה אופסה בהצלחה");
       setError("");
-      navigate("/login");
-    } catch (error) {
-      setError(error.response.data.message);
+      setTimeout(() => navigate("/login"), 1500);
+    } catch (err) {
+      // err.response can be undefined on network errors / CORS / server down.
+      // Optional-chaining + fallback message — accessing
+      // err.response.data.message directly used to throw and leave the page
+      // hung with no feedback.
+      setError(err.response?.data?.message || "אירעה שגיאה. נסה שוב מאוחר יותר.");
       setMessage("");
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div className="reset-password-page">
+    <div className="reset-password-page" dir="rtl">
       <div className="container py-5">
         <div className="row justify-content-center">
           <div className="col-md-6">
             <div className="card shadow">
               <div className="card-body p-5">
-                <h2 className="card-title text-center mb-4">Reset Password</h2>
+                <h2 className="card-title text-center mb-4">איפוס סיסמה</h2>
                 <form onSubmit={handleSubmit}>
                   <div className="mb-3">
                     <label htmlFor="newPassword" className="form-label">
-                      New Password
+                      סיסמה חדשה
                     </label>
                     <input
                       type="password"
                       className="form-control"
                       id="newPassword"
-                      placeholder="Enter new password"
+                      placeholder="הזן סיסמה חדשה"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       required
                       name="newPassword"
+                      dir="ltr"
                     />
                   </div>
                   <div className="mb-3">
                     <label htmlFor="confirmNewPassword" className="form-label">
-                      Confirm New Password
+                      אישור סיסמה חדשה
                     </label>
                     <input
                       type="password"
                       className="form-control"
                       id="confirmNewPassword"
-                      placeholder="Confirm new password"
+                      placeholder="הזן שוב את הסיסמה החדשה"
                       value={confirmNewPassword}
                       onChange={(e) => setConfirmNewPassword(e.target.value)}
                       required
                       name="confirmNewPassword"
+                      dir="ltr"
                     />
                   </div>
-                  <button type="submit" className="btn btn-primary w-100 mb-3">
-                    Reset Password
+                  <button
+                    type="submit"
+                    className="btn btn-primary w-100 mb-3"
+                    disabled={saving}
+                  >
+                    {saving ? "מאפס..." : "איפוס סיסמה"}
                   </button>
                 </form>
                 {message && (

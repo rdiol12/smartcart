@@ -1,6 +1,6 @@
 import React, { useState, useContext } from "react";
 import { AuthContext } from "../context/AuthContext";
-import api from "../api";
+import api, { setAccessToken } from "../api";
 import { useNavigate, Link } from "react-router-dom";
 import { useNotify } from "../context/NotifyContext";
 
@@ -41,18 +41,33 @@ const Profile = () => {
     }
     setSaving(true);
     try {
-      await api.put("/api/user/password", { currentPassword, newPassword, confirmNewPassword });
-      setMessage({ type: "success", text: "הסיסמה שונתה בהצלחה" });
+      const { data } = await api.put("/api/user/password", {
+        currentPassword,
+        newPassword,
+        confirmNewPassword,
+      });
       setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
+      // The backend invalidates every refresh token and clears the cookie
+      // when the password changes (loggedOut: true on the response). Honor
+      // that here: drop the in-memory access token too (it'd otherwise
+      // remain valid for up to ~15 min until exp) and bounce to /login.
+      // Only on success — a failed change shouldn't log the user out.
+      if (data?.loggedOut) {
+        setAccessToken(null);
+        setUser(null);
+        navigate("/login");
+      } else {
+        setMessage({ type: "success", text: "הסיסמה שונתה בהצלחה" });
+      }
     } catch (err) {
-      setMessage({ type: "error", text: err.response?.data?.message || "שינוי הסיסמה נכשל" });
+      setMessage({
+        type: "error",
+        text: err.response?.data?.message || "שינוי הסיסמה נכשל",
+      });
     } finally {
       setSaving(false);
-      await api.post("/api/logout-all");
-      setUser(null);
-      navigate("/login");
     }
   };
 
@@ -140,15 +155,15 @@ const Profile = () => {
                   <form onSubmit={handleChangePassword}>
                     <div className="mb-3">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה נוכחית</label>
-                      <input type="password" className="form-control sc-input" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+                      <input type="password" className="form-control sc-input" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} dir="ltr" />
                     </div>
                     <div className="mb-3">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                      <input type="password" className="form-control sc-input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} dir="ltr" />
                     </div>
                     <div className="mb-4">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>אישור סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} />
+                      <input type="password" className="form-control sc-input" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} dir="ltr" />
                     </div>
                     <button type="submit" className="sc-btn sc-btn-ghost w-100" disabled={saving} style={{ padding: "10px" }}>
                       עדכן סיסמה
@@ -218,6 +233,7 @@ const Profile = () => {
                           onChange={(e) => setDeletePassword(e.target.value)}
                           autoComplete="current-password"
                           autoFocus
+                          dir="ltr"
                         />
                       </div>
                       <div className="d-grid gap-2">

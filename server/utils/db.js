@@ -10,7 +10,19 @@ const { Pool } = pg;
  * connection settings so they only need to be changed in one place.
  */
 export function createPool() {
-  return new Pool({ connectionString: process.env.DATABASE_URL });
+  return new Pool({
+    connectionString: process.env.DATABASE_URL,
+    // Default pg.Pool max is 10 — easy to exhaust under socket-event bursts
+    // (each REST handler holds a client for the duration of one query, but
+    // io.emit fanouts can trigger several concurrent reads from the same
+    // user). 20 gives headroom; bump higher if the deploy starts queueing.
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    // SSL is controlled by sslmode= in DATABASE_URL (managed PGs like Neon
+    // / Render bake `sslmode=require` into the URL they hand out). If you
+    // ever need to force/relax SSL, add an `ssl` option here.
+  });
 }
 
 export const db = createPool();

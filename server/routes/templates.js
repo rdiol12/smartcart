@@ -39,12 +39,22 @@ router.get("/", async (req, res) => {
  * Body: { listId, templateName }
  */
 router.post("/", async (req, res) => {
-  const { listId, templateName } = req.body;
+  const { templateName } = req.body;
+  // Coerce listId from the body to an int and round-trip-validate it.
+  // Previously a non-numeric value got handed straight to assertMember's
+  // SQL, surfacing as a 500 with a pg "invalid input syntax for type
+  // integer" error in the response body.
+  const listIdRaw = req.body.listId;
+  const listId = Number(listIdRaw);
+  if (
+    !Number.isInteger(listId) ||
+    listId <= 0 ||
+    String(listId) !== String(listIdRaw)
+  ) {
+    return res.status(400).json({ message: "Invalid listId" });
+  }
   if (!templateName || !templateName.trim()) {
     return res.status(400).json({ message: "Template name is required" });
-  }
-  if (!listId) {
-    return res.status(400).json({ message: "listId is required" });
   }
 
   try {
@@ -91,8 +101,12 @@ router.post("/:id/apply", async (req, res) => {
     return res.status(400).json({ message: "List name is required" });
   }
 
+  // The list + members + items inserts have to land together: if the items
+  // copy fails after the first two succeed, the caller ends up with an
+  // orphan empty list owned by them. Wrap the whole apply in a transaction.
+  const client = await db.connect();
   try {
-    const t = await db.query(
+    const t = await client.query(
       "SELECT id FROM app.list_templates WHERE id = $1 AND user_id = $2",
       [templateId, req.userId],
     );
@@ -100,18 +114,19 @@ router.post("/:id/apply", async (req, res) => {
       return res.status(404).json({ message: "Template not found" });
     }
 
-    const listRes = await db.query(
+    await client.query("BEGIN");
+    const listRes = await client.query(
       "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
       [listName.trim()],
     );
     const newListId = listRes.rows[0].id;
 
-    await db.query(
+    await client.query(
       "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, 'admin')",
       [newListId, req.userId],
     );
 
-    await db.query(
+    await client.query(
       `INSERT INTO app.list_items (listid, itemname, quantity, note, sort_order, addby, addat, updatedat)
        SELECT $1, item_name, quantity, note, COALESCE(sort_order, 0), $2, NOW(), NOW()
        FROM app.template_items
@@ -119,10 +134,14 @@ router.post("/:id/apply", async (req, res) => {
       [newListId, req.userId, templateId],
     );
 
+    await client.query("COMMIT");
     return res.json({ listId: newListId });
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
     logger.error("Error applying template", { error: err.message, stack: err.stack });
     return res.status(500).json({ message: "Error applying template" });
+  } finally {
+    client.release();
   }
 });
 

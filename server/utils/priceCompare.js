@@ -86,9 +86,19 @@ async function fetchLinkedPrices(db, productIds) {
   return res.rows;
 }
 
+// Escape LIKE wildcards in user-supplied text so an item literally named
+// "100% Orange Juice" matches "100%25 Orange Juice"-style literals instead
+// of being interpreted as "everything containing Orange Juice". pg's default
+// LIKE escape character is backslash.
+function escapeLikePattern(s) {
+  return s.replace(/[\\%_]/g, "\\$&");
+}
+
 async function fetchFuzzyPrices(db, unlinkedItems) {
   if (unlinkedItems.length === 0) return { rows: [], failed: false };
-  const namePatterns = unlinkedItems.map((i) => `%${i.itemname}%`);
+  const namePatterns = unlinkedItems.map(
+    (i) => `%${escapeLikePattern(i.itemname)}%`,
+  );
   const placeholders = namePatterns
     .map((_, idx) => `i.name ILIKE $${idx + 1}`)
     .join(" OR ");

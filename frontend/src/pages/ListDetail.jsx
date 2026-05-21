@@ -8,6 +8,7 @@ import InviteLinkModal from "../components/InviteLinkModal";
 import SaveAsTemplateModal from "../components/SaveAsTemplateModal";
 import BarcodeScanner from "../components/BarcodeScanner";
 import { useNotify } from "../context/NotifyContext";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const ListDetail = () => {
   const { listId } = useParams();
@@ -42,6 +43,12 @@ const ListDetail = () => {
   const [showChildrenModal, setShowChildrenModal] = useState(false);
   const [childrenList, setChildrenList] = useState([]);
   const [childrenLoading, setChildrenLoading] = useState(false);
+
+  // Inline modals (price compare + child management) live in this file
+  // rather than as standalone components, so we lock body scroll here.
+  // The standalone modals (InviteLinkModal, SaveAsTemplateModal,
+  // BarcodeScanner) handle their own locks via the same hook.
+  useBodyScrollLock(showCompare || showChildrenModal);
 
   useEffect(() => {
     const fetchData = async () => {

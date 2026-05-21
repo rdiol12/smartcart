@@ -24,9 +24,20 @@ const Templates = () => {
   }, [notify]);
 
   const handleApply = async (templateId, templateName) => {
+    // Prompt for the new list's name (defaulting to the template name).
+    // Previously this used templateName verbatim, so applying the same
+    // template twice produced two lists with identical names — confusing
+    // when MyLists renders them side-by-side. window.prompt is consistent
+    // with the existing window.confirm in handleDelete below; if/when this
+    // grows it can move into ApplyTemplateModal, which already does this
+    // properly when invoked from MyLists.
+    const listName = window.prompt("שם הרשימה החדשה:", templateName);
+    if (listName === null) return;
+    const trimmed = listName.trim();
+    if (!trimmed) return;
     try {
       const { data } = await api.post(`/api/templates/${templateId}/apply`, {
-        listName: templateName,
+        listName: trimmed,
       });
       navigate(`/list/${data.listId}`);
     } catch (err) {

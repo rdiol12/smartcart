@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Html5QrcodeScanner } from "html5-qrcode";
 import api from "../api";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const BarcodeScanner = ({ onResult, onClose }) => {
+  // The scanner has no show prop — the parent unmounts it to close — so it's
+  // always "active" while mounted.
+  useBodyScrollLock(true);
   const scannerRef = useRef(null);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(true);

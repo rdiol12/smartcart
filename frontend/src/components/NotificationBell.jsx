@@ -47,7 +47,11 @@ const NotificationBell = () => {
   const handleResolve = async (requestId, action) => {
     try {
       await api.post(`/api/family/kid-requests/${requestId}/resolve`, { action });
-      setRequests((prev) => prev.filter((r) => r.id !== requestId && r.requestId !== requestId));
+      // The server-side new_kid_request emit historically published both
+      // `id` and `requestId` for the same value (plus snake/camelCase pairs
+      // on every other field). The REST GET /pending and resolve responses
+      // canonically use `id`, so trust that here and stop dual-keying.
+      setRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (err) {
       notify(err.response?.data?.message || "שגיאה בעדכון הבקשה");
     }

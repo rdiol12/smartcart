@@ -1,8 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import validator from "validator";
-import axios from "axios";
-import { API_URL } from "../api";
+import api from "../api";
 
 function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -22,9 +21,11 @@ function ForgotPassword() {
 
     setLoading(true);
     try {
-      const response = await axios.post(`${API_URL}/api/forgot-password`, {
-        email,
-      });
+      // Use the configured api instance like every other auth page does;
+      // raw axios here was an outlier and bypassed the baseURL / shared
+      // interceptors. The endpoint doesn't need auth, but uniformity beats
+      // a one-off pattern.
+      const response = await api.post("/api/forgot-password", { email });
       setMessage(response.data.message);
     } catch (err) {
       setError(err.response?.data?.message || "שגיאה בשליחת הבקשה");

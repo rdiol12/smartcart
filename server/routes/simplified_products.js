@@ -2,14 +2,26 @@ import { Router } from "express";
 import { authenticateToken } from "../middleware/auth.js";
 import db from "../utils/db.js";
 import { searchLimiter } from "../middleware/rateLimiter.js";
+import {
+  searchProductValidator,
+  barcodeValidator,
+} from "../middleware/validators.js";
 import { logger } from "../utils/logger.js";
 const router = Router();
 
+// Auth policy in this file:
+//   - Product catalog reads (search, barcode lookup, product detail) are
+//     PUBLIC. The frontend routes /store and /product/:id are intentionally
+//     guest-visible, and the underlying price feeds are themselves public
+//     data the chains are required to publish. searchLimiter handles abuse.
+//   - User-specific endpoints (suggestions, predict-quantity, price-history,
+//     delivery providers) require auth — they expose either user history
+//     or are gated UX features.
+
 /**
- * GET /api/search
- * Search products by name
+ * GET /api/search — public catalog search.
  */
-router.get("/search", authenticateToken, searchLimiter, async (req, res) => {
+router.get("/search", searchLimiter, searchProductValidator, async (req, res) => {
   const search = req.query.q;
   if (!search) return res.json({ rows: [], hasMore: false, nextOffset: 0 });
 
@@ -58,7 +70,7 @@ router.get("/search", authenticateToken, searchLimiter, async (req, res) => {
  * GET /api/items/barcode/:barcode
  * Lookup product by barcode
  */
-router.get("/items/barcode/:barcode", searchLimiter, async (req, res) => {
+router.get("/items/barcode/:barcode", searchLimiter, barcodeValidator, async (req, res) => {
   const { barcode } = req.params;
 
   if (!barcode) {
@@ -100,12 +112,21 @@ router.get("/items/barcode/:barcode", searchLimiter, async (req, res) => {
 router.get("/suggestions", authenticateToken, async (req, res) => {
 
   try {
+    // Use the most recent price/quantity per item, not MAX. MAX gave the most
+    // expensive historical price and the largest historical quantity — i.e.
+    // the worst-case "stock up at peak price" — which is the opposite of a
+    // useful suggestion. The DISTINCT ON subquery picks the latest row per
+    // (user, itemname); the outer query counts how often it was added.
     const result = await db.query(
-      `SELECT itemname, COUNT(*) as freq, MAX(price) as price, MAX(quantity) as quantity
-       FROM app.list_items li
-       JOIN app.list_members lm ON lm.list_id = li.listid
-       WHERE lm.user_id = $1
-       GROUP BY itemname
+      `SELECT itemname, freq, price, quantity FROM (
+         SELECT itemname, COUNT(*) OVER (PARTITION BY itemname) AS freq,
+                price, quantity,
+                ROW_NUMBER() OVER (PARTITION BY itemname ORDER BY addat DESC) AS rn
+         FROM app.list_items li
+         JOIN app.list_members lm ON lm.list_id = li.listid
+         WHERE lm.user_id = $1
+       ) sub
+       WHERE rn = 1
        ORDER BY freq DESC
        LIMIT 10`,
       [req.userId],
@@ -205,10 +226,15 @@ router.get(
     const itemName = decodeURIComponent(req.params.itemName);
 
     try {
+      // LIMIT defends against a malicious or unlucky user with thousands of
+      // matching rows OOMing the response. 100 samples is plenty for an
+      // average-of-quantities prediction.
       const result = await db.query(
         `SELECT quantity FROM app.list_items li
        JOIN app.list_members lm ON lm.list_id = li.listid
-       WHERE lm.user_id = $1 AND li.itemname ILIKE $2`,
+       WHERE lm.user_id = $1 AND li.itemname ILIKE $2
+       ORDER BY li.addat DESC
+       LIMIT 100`,
         [req.userId, itemName],
       );
 

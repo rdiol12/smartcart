@@ -17,10 +17,16 @@ const db = new Pool({
 async function migrate() {
   try {
     const sql = readFileSync(join(__dirname, 'add_price_history.sql'), 'utf8');
-    
-    // Split by semicolons and execute each statement
-    const statements = sql.split(';').filter(s => s.trim());
-    
+
+    // Naive split — fine for the simple DDL in add_price_history.sql (a few
+    // CREATE TABLE / CREATE INDEX IF NOT EXISTS statements with no embedded
+    // semicolons), but it WILL choke on anything containing a ';' inside a
+    // string literal, function body ($$...$$), comment, or DO block. If the
+    // companion SQL file ever grows beyond trivial DDL, swap to a real SQL
+    // parser (e.g. pg-minify or sending the whole file as one statement
+    // since pg supports multi-statement queries).
+    const statements = sql.split(';').filter((s) => s.trim());
+
     for (const statement of statements) {
       if (statement.trim()) {
         await db.query(statement);

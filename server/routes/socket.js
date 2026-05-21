@@ -1,10 +1,11 @@
-import { authenticateToken } from "../middleware/auth.js";
+import jwt from "jsonwebtoken";
 import { logger } from "../utils/logger.js";
 import db from "../utils/db.js";
 import assertMember from "../utils/assertmember.js";
 import logActivity from "../utils/logActivity.js";
 import { assertNotChild } from "../utils/userPolicy.js";
-import { addItem } from "../services/listItems.js";
+import { addItem, reorderItems } from "../services/listItems.js";
+import { messages } from "../utils/messages.js";
 import { parseSocketPayload } from "../utils/socketValidate.js";
 import {
   joinListSchema,
@@ -21,6 +22,13 @@ import {
   reorderItemsSchema,
 } from "../utils/socketSchemas.js";
 
+// Expo error codes that mean "this device token is gone for good".
+// Per https://docs.expo.dev/push-notifications/sending-notifications/#individual-errors
+const EXPO_DEAD_TOKEN_ERRORS = new Set([
+  "DeviceNotRegistered",
+  "InvalidCredentials",
+]);
+
 async function sendPushNotifications(userIds, title, body, data = {}) {
   try {
     if (!userIds || userIds.length === 0) return;
@@ -31,7 +39,7 @@ async function sendPushNotifications(userIds, title, body, data = {}) {
     );
     const tokens = result.rows
       .map((r) => r.token)
-      .filter((t) => t.startsWith("ExponentPushToken"));
+      .filter((t) => typeof t === "string" && t.startsWith("ExponentPushToken"));
 
     if (tokens.length === 0) return;
 
@@ -43,9 +51,10 @@ async function sendPushNotifications(userIds, title, body, data = {}) {
       data,
     }));
 
+    const deadTokens = [];
     for (let i = 0; i < messages.length; i += 100) {
       const chunk = messages.slice(i, i + 100);
-      await fetch("https://exp.host/--/api/v2/push/send", {
+      const resp = await fetch("https://exp.host/--/api/v2/push/send", {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -53,38 +62,144 @@ async function sendPushNotifications(userIds, title, body, data = {}) {
         },
         body: JSON.stringify(chunk),
       });
+      // Expo returns per-ticket results in the same order as the request.
+      // Inspect them so we can prune tokens Expo has told us are dead instead
+      // of resending to them forever.
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (_jsonErr) {
+        continue;
+      }
+      const tickets = Array.isArray(payload?.data) ? payload.data : [];
+      tickets.forEach((ticket, idx) => {
+        if (
+          ticket?.status === "error" &&
+          EXPO_DEAD_TOKEN_ERRORS.has(ticket?.details?.error)
+        ) {
+          deadTokens.push(chunk[idx].to);
+        }
+      });
+    }
+
+    if (deadTokens.length > 0) {
+      await db.query(
+        "DELETE FROM app.push_tokens WHERE token = ANY($1::text[])",
+        [deadTokens],
+      );
+      logger.info("Pruned dead push tokens", { count: deadTokens.length });
     }
   } catch (err) {
     logger.error("Error sending push notifications", { error: err.message, stack: err.stack });
   }
 }
 
+// Per-socket token bucket. Refilled at SOCKET_RATE_PER_SEC tokens/second up to
+// SOCKET_RATE_BURST; each mutation event costs one token. Authenticated users
+// could otherwise spam send_item / toggle_item until the DB falls over —
+// apiLimiter only covers REST.
+const SOCKET_RATE_PER_SEC = 20;
+const SOCKET_RATE_BURST = 50;
+const socketRateState = new Map();
+
+const MUTATION_EVENTS = new Set([
+  "send_item",
+  "toggle_item",
+  "delete_item",
+  "mark_paid",
+  "unmark_paid",
+  "update_quantity",
+  "update_note",
+  "create_list",
+  "add_comment",
+  "send_chat_message",
+  "assign_item",
+  "reorder_items",
+]);
+
+// Keyed by user id, not socket id, so a hostile client can't refresh the
+// bucket by reconnecting (which used to wipe state on disconnect and hand
+// them a new SOCKET_RATE_BURST). Trade-off: legit flaky-network reconnects
+// inherit their (possibly-depleted) bucket — that's worth it.
+// Per-pod state: under horizontal scaling, the same user landing on two
+// pods gets two independent buckets, effectively doubling their ceiling.
+// Honest acknowledgement of the limit; fixing requires Redis or similar.
+function rateLimitOk(userId) {
+  const now = Date.now();
+  let state = socketRateState.get(userId);
+  if (!state) {
+    state = { tokens: SOCKET_RATE_BURST, lastRefill: now };
+    socketRateState.set(userId, state);
+  }
+  const elapsed = (now - state.lastRefill) / 1000;
+  state.tokens = Math.min(
+    SOCKET_RATE_BURST,
+    state.tokens + elapsed * SOCKET_RATE_PER_SEC,
+  );
+  state.lastRefill = now;
+  if (state.tokens < 1) return false;
+  state.tokens -= 1;
+  return true;
+}
+
+// Prune buckets that haven't been touched in a while so the map doesn't grow
+// forever as users come and go. A bucket sitting idle is always at full
+// SOCKET_RATE_BURST anyway, so dropping it is equivalent to keeping it.
+const rateBucketSweep = setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [k, v] of socketRateState) {
+    if (v.lastRefill < cutoff) socketRateState.delete(k);
+  }
+}, 5 * 60 * 1000);
+rateBucketSweep.unref?.();
+
 export default function registerSocketHandlers(io) {
+  // Inline JWT verify. The previous fake req/res adapter that shoehorned the
+  // Express authenticateToken middleware in here was clever but brittle —
+  // any change to that middleware's response shape would have silently
+  // broken socket auth.
   io.use((socket, next) => {
-    const req = {
-      headers: {
-        authorization: `Bearer ${socket.handshake.auth.token}`,
-      },
-    };
-    // Fake res — converts Express-style 401 responses into socket errors
-    const res = {
-      status(code) {
-        return {
-          json(body) {
-            return next(new Error(body?.message || "Unauthorized"));
-          },
-        };
-      },
-    };
-    authenticateToken(req, res, (err) => {
-      if (err) return next(new Error("Unauthorized"));
-      socket.user = req.user;
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error("Unauthorized"));
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      if (payload.type !== "access") return next(new Error("Unauthorized"));
+      socket.user = { id: payload.sub };
       next();
-    });
+    } catch (_err) {
+      next(new Error("Unauthorized"));
+    }
   });
 
   io.on("connection", (socket) => {
     logger.info("Socket connected", { socketId: socket.id });
+
+    // Post-join handlers verify membership via socket.rooms.has(listId)
+    // instead of a per-event DB SELECT. join_list (below) is the one place
+    // that still does the DB check — that's where membership is actually
+    // established and the room is joined. Trade-off: a user who's been
+    // kicked from a list but still has an open socket can keep mutating
+    // until they disconnect. If that gap matters more than the per-event
+    // DB latency, force-leave them from the room on the kick path
+    // (currently family.js DELETE /lists/:id/children/:childId,
+    // lists.js POST /:id/leave, and lists.js DELETE /:id).
+
+    // Drop mutation events that exceed the per-user rate. Read-only and
+    // bookkeeping events (join_list, register_user) pass through untouched.
+    socket.use(([event], next) => {
+      if (MUTATION_EVENTS.has(event) && !rateLimitOk(socket.user.id)) {
+        return next(new Error("rate_limited"));
+      }
+      next();
+    });
+
+    socket.on("disconnect", () => {
+      logger.info("Socket disconnected", { socketId: socket.id });
+      // Don't delete rate state here — the bucket is keyed by user id and
+      // we want it to survive reconnects so a hostile client can't refresh
+      // their burst by cycling the connection. The periodic sweep handles
+      // cleanup for genuinely abandoned users.
+    });
 
     socket.on("register_user", () => {
       socket.join(`user_${socket.user.id}`);
@@ -139,8 +254,8 @@ export default function registerSocketHandlers(io) {
           if (memberIds.length > 0) {
             sendPushNotifications(
               memberIds,
-              "פריט חדש ברשימה",
-              `${adderName || "Someone"} הוסיף ${itemName}`,
+              messages.push_new_item_title,
+              messages.push_new_item_body(adderName, itemName),
               {
                 type: "item_added",
                 listId,
@@ -172,7 +287,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, isChecked } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         const res = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -210,7 +325,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         await db.query(
           "DELETE FROM app.list_items WHERE id = $1 AND listId = $2",
           [itemId, listId],
@@ -218,7 +333,7 @@ export default function registerSocketHandlers(io) {
         io.to(String(listId)).emit("item_deleted", { itemId });
         logActivity(listId, userId, "item_deleted", `Deleted item ${itemId}`);
       } catch (err) {
-        logger.warn("Delete error", { error: err.message, stack: err.stack });
+        logger.error("Delete error", { error: err.message, stack: err.stack });
       }
     });
 
@@ -228,7 +343,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         const result = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -262,7 +377,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         await db.query(
           "UPDATE app.list_items SET paid_by = NULL, paid_at = NULL WHERE id = $1 AND listId = $2",
           [itemId, listId],
@@ -279,7 +394,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, quantity } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         await db.query(
           "UPDATE app.list_items SET quantity = $1 WHERE id = $2 AND listId = $3",
           [quantity, itemId, listId],
@@ -296,7 +411,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, note } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         const result = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -370,7 +485,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, comment } = validated;
       const userId = socket.user.id;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         const result = await db.query(
           `WITH existing AS (
              SELECT id FROM app.list_item_comments
@@ -417,7 +532,7 @@ export default function registerSocketHandlers(io) {
       const userId = socket.user.id;
       const { listId, message } = validated;
       try {
-        await assertMember(listId, userId);
+        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
         const result = await db.query(
           `WITH inserted AS (
              INSERT INTO app.list_chat (list_id, user_id, message)
@@ -449,12 +564,23 @@ export default function registerSocketHandlers(io) {
       if (!validated) return;
       const { itemId, listId, assignedTo } = validated;
       try {
-        await assertMember(listId, socket.user.id);
+        if (!socket.rooms.has(String(listId)))
+          throw new Error("Not a member");
+        // The WHERE also enforces "assignee must be a member of this list"
+        // (null = unassign, which is allowed). Without it, the schema check
+        // confirms `assignedTo` is a positive int — but doesn't enforce DB
+        // state — and any random user id would have been accepted.
         const res = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
                 SET assigned_to = $1
               WHERE id = $2 AND listid = $3
+                AND (
+                  $1::int IS NULL OR EXISTS (
+                    SELECT 1 FROM app.list_members
+                    WHERE list_id = $3 AND user_id = $1
+                  )
+                )
               RETURNING 1
            )
            SELECT CASE WHEN $1::int IS NOT NULL
@@ -463,6 +589,13 @@ export default function registerSocketHandlers(io) {
              FROM updated`,
           [assignedTo, itemId, listId],
         );
+        if (res.rows.length === 0) {
+          // Either the item/list doesn't match, or assignedTo isn't a member.
+          socket.emit("item_error", {
+            message: "Cannot assign — invalid item or assignee not in list",
+          });
+          return;
+        }
         const assignedToName = res.rows[0]?.assigned_to_name ?? null;
 
         io.to(String(listId)).emit("item_assigned", {
@@ -486,31 +619,15 @@ export default function registerSocketHandlers(io) {
       const { listId, items } = validated;
 
       try {
-        await assertMember(listId, socket.user.id);
-      } catch (err) {
-        return callback?.({ success: false, error: "Not a member" });
-      }
-
-      const client = await db.connect();
-      try {
-        await client.query("BEGIN");
-        for (const item of items) {
-          await client.query(
-            "UPDATE app.list_items SET sort_order = $1 WHERE id = $2 AND listid = $3",
-            [item.sortOrder, item.itemId, listId],
-          );
-        }
-        await client.query("COMMIT");
+        await reorderItems({ listId, userId: socket.user.id, items });
         socket.to(String(listId)).emit("items_reordered", { items });
         callback?.({ success: true });
       } catch (err) {
         if (err.message === "Not a member") {
           return callback?.({ success: false, error: "Not a member" });
         }
-        logger.error("Reorder assertMember error", { error: err.message, stack: err.stack });
+        logger.error("Reorder error", { error: err.message, stack: err.stack });
         return callback?.({ success: false, error: "Server error" });
-      } finally {
-        client.release();
       }
     });
   });

@@ -1,5 +1,13 @@
 import rateLimit from 'express-rate-limit';
 
+// Note: every limiter here uses express-rate-limit's default MemoryStore.
+// State is per-process, so the same client landing on two pods under
+// horizontal scaling effectively doubles the ceiling on every limit
+// (and the per-account lockout in utils/loginAttempts.js is the only
+// thing in this codebase that actually crosses pods, because it lives
+// in Postgres). If/when this deploys to >1 instance, swap the store
+// for the official rate-limit-redis or rate-limit-postgres adapter.
+
 // General API limiter
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

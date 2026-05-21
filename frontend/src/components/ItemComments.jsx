@@ -43,10 +43,13 @@ const ItemComments = ({ itemId, listId }) => {
       notify("כבר הוספת הערה לפריט זה");
       return;
     }
+    // No userId here — the backend reads socket.user.id from the JWT
+    // payload and ignores any client-supplied id. Including it was
+    // wasteful and would mislead a future maintainer into thinking the
+    // wire field is authoritative.
     socket.emit("add_comment", {
       itemId,
       listId,
-      userId: user.id,
       comment: newComment,
     });
     setNewComment("");

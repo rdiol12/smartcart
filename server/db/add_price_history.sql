@@ -10,6 +10,3 @@ CREATE TABLE IF NOT EXISTS app.price_history (
 CREATE INDEX IF NOT EXISTS idx_price_history_product ON app.price_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_date ON app.price_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_chain ON app.price_history(chain_id);
-
--- Optional: track search popularity
-ALTER TABLE app.items ADD COLUMN IF NOT EXISTS search_count INTEGER DEFAULT 0;

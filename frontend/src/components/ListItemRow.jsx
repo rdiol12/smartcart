@@ -1,28 +1,46 @@
-import React, { useState, useContext } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AuthContext } from "../context/AuthContext";
 import socket from "../socket";
 import ItemNoteEditor from "./ItemNoteEditor";
 import ItemComments from "./ItemComments";
 
 const ListItemRow = ({ item, listId }) => {
-  const { user } = useContext(AuthContext);
   const navigate = useNavigate();
   const [showComments, setShowComments] = useState(false);
+  // Short busy window after a button tap so tap-tap-tap on a small mobile
+  // icon doesn't fan out N socket emits. Cleared after the typical
+  // round-trip; the parent list re-renders from the server's broadcast
+  // (item_paid / item_deleted / etc.) so the UI catches up regardless.
+  const [busy, setBusy] = useState(false);
+  const lockBriefly = () => {
+    setBusy(true);
+    setTimeout(() => setBusy(false), 500);
+  };
 
   const handleToggle = () => {
+    if (busy) return;
+    lockBriefly();
     socket.emit("toggle_item", { itemId: item.id, listId, isChecked: !item.is_checked });
   };
 
   const handleDelete = () => {
+    if (busy) return;
+    // Per-item delete used to be one tap → gone. On a row with three small
+    // icons in a column (paid / comments / trash) a mis-tap silently
+    // destroyed an item with no undo. Add a confirm to match the list-level
+    // delete in ListDetail.jsx.
+    if (!window.confirm(`למחוק את "${item.itemname}"?`)) return;
+    lockBriefly();
     socket.emit("delete_item", { itemId: item.id, listId });
   };
 
   const handleMarkPaid = () => {
+    if (busy) return;
+    lockBriefly();
     if (item.paid_by) {
       socket.emit("unmark_paid", { itemId: item.id, listId });
     } else {
-      socket.emit("mark_paid", { itemId: item.id, listId, userId: user.id });
+      socket.emit("mark_paid", { itemId: item.id, listId });
     }
   };
 
@@ -118,6 +136,7 @@ const ListItemRow = ({ item, listId }) => {
           <button
             className={`sc-icon-btn sc-icon-btn-success ${isPaid ? "active" : ""}`}
             onClick={handleMarkPaid}
+            disabled={busy}
             title={isPaid ? "בטל תשלום" : "סמן כשולם"}
           >
             <i className="bi bi-currency-exchange"></i>
@@ -132,6 +151,7 @@ const ListItemRow = ({ item, listId }) => {
           <button
             className="sc-icon-btn sc-icon-btn-danger"
             onClick={handleDelete}
+            disabled={busy}
             title="מחק"
           >
             <i className="bi bi-trash"></i>

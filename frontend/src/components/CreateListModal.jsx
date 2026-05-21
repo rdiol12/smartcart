@@ -1,23 +1,37 @@
-import React, { useState, useContext } from "react";
-import { AuthContext } from "../context/AuthContext";
+import React, { useState } from "react";
 import socket from "../socket";
+import { useNotify } from "../context/NotifyContext";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+
+// Mirror the server's createListSchema bounds (utils/socketSchemas.js).
+// Without these the socket emit fires, the validator on the other side
+// returns { success: false }, and the user sees the generic "create
+// failed" toast with no way to know the length is the problem.
+const LIST_NAME_MAX = 200;
 
 const CreateListModal = ({ show, onClose, onCreated }) => {
-  const { user } = useContext(AuthContext);
+  useBodyScrollLock(show);
+  const notify = useNotify();
   const [listName, setListName] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleCreate = () => {
-    if (!listName.trim()) return;
+    const trimmed = listName.trim();
+    if (!trimmed) return;
+    if (trimmed.length > LIST_NAME_MAX) {
+      notify(`שם הרשימה ארוך מדי (מקסימום ${LIST_NAME_MAX} תווים)`);
+      return;
+    }
     setLoading(true);
-    socket.emit("create_list", { list_name: listName, userId: user.id }, (response) => {
+    // No userId — backend reads it from socket.user.id (JWT).
+    socket.emit("create_list", { list_name: trimmed }, (response) => {
       setLoading(false);
       if (response.success) {
         setListName("");
         onCreated(response.listId);
         onClose();
       } else {
-        alert("שגיאה ביצירת הרשימה");
+        notify(response.error || "שגיאה ביצירת הרשימה");
       }
     });
   };
@@ -42,6 +56,7 @@ const CreateListModal = ({ show, onClose, onCreated }) => {
             value={listName}
             onChange={(e) => setListName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+            maxLength={LIST_NAME_MAX}
             autoFocus
           />
         </div>

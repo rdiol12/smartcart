@@ -307,10 +307,14 @@ router.post("/login", authLimiter, loginValidator, async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    // Treat unverified accounts as wrong credentials so the response shape
+    // doesn't leak "this email exists AND you got the password right".
+    // Legit unverified users recover via /api/forgot-password or by
+    // re-registering (which re-sends the verification mail without
+    // overwriting the original credentials).
     if (!user.email_verified_at) {
-      return res
-        .status(403)
-        .json({ message: "Please verify your email before logging in" });
+      await recordFailedLogin(identifier);
+      return res.status(400).json({ message: "Invalid credentials" });
     }
 
     await resetLoginAttempts(identifier);
@@ -483,7 +487,7 @@ router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
         return res.status(200).json(genericResponse);
       }
     } else {
-      logger.warn("SMTP not configured. Reset link", { error: resetUrl.message, stack: resetUrl.stack });
+      logger.warn("SMTP not configured. Reset link generated", { resetUrl });
       if (process.env.NODE_ENV !== "production") {
         return res.status(200).json({ ...genericResponse, resetUrl });
       }
@@ -652,7 +656,22 @@ router.put("/user/password", async (req, res) => {
       hashedPassword,
       req.userId,
     ]);
-    return res.status(200).json({ message: "Password updated successfully" });
+    // Invalidate every refresh token for this user — including the one the
+    // caller is holding. Access tokens already in client hands will keep
+    // working until their ~15-min exp (the unavoidable stateless-JWT
+    // trade-off); attempted refresh after that lands at the empty token
+    // table and the user has to re-authenticate. Sessions on other devices
+    // die at the same time.
+    await db.query(
+      "DELETE FROM app2.tokens WHERE user_id = $1 AND type = 'refresh'",
+      [req.userId],
+    );
+    const { maxAge: _ignored, ...clearOpts } = refreshCookieOptions();
+    res.clearCookie("refreshToken", clearOpts);
+    return res.status(200).json({
+      message: "Password updated. Please log in again.",
+      loggedOut: true,
+    });
   } catch (err) {
     logger.error("Password change error", { error: err.message, stack: err.stack });
     return res.status(500).json({ message: "Error updating password" });

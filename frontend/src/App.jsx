@@ -43,12 +43,11 @@ function App() {
                 </PrivateRoute>
               }
             />
-            <Route path="/verification-confirmed"
-              element={
-                <PrivateRoute >
-                  <VerificationConfirmed />
-                </PrivateRoute>}
-            />
+            {/* Public — the page is shown immediately after the verify-email
+                redirect, and the session is still being bootstrapped via
+                /api/refresh at that point. Gating with PrivateRoute could
+                bounce the user to /login on a transient network blip. */}
+            <Route path="/verification-confirmed" element={<VerificationConfirmed />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/list" element={<PrivateRoute><MyLists /></PrivateRoute>} />
             <Route path="/list/:listId" element={<PrivateRoute><ListDetail /></PrivateRoute>} />

@@ -1,3 +1,10 @@
+# Local development stack only. Do NOT deploy this compose file to a
+# public server as-is: it exposes the postgres port directly to the host
+# (15432), publishes pgadmin on 8080 with credentials from .env, and the
+# server reads its config from ./server/.env. Production deployments
+# should use a managed Postgres + their own server runtime (Render,
+# Railway, etc.) and not run this file.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -11,7 +18,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./server/database_schema.sql:/docker-entrypoint-initdb.d/
+      # Folder mount with init scripts (postgres runs every *.sql in here
+      # on first start). Renamed from `database_schema.sql/` so the path
+      # actually looks like a folder.
+      - ./server/db_init:/docker-entrypoint-initdb.d/
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s

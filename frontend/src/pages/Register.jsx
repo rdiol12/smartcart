@@ -211,6 +211,7 @@ const Register = () => {
               value={formData.password}
               onChange={handleChange}
               required
+              dir="ltr"
             />
           </div>
 
@@ -229,6 +230,7 @@ const Register = () => {
               value={formData.confirmPassword}
               onChange={handleChange}
               required
+              dir="ltr"
             />
           </div>
 

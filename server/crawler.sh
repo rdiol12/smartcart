@@ -42,10 +42,19 @@ EOF
     esac
 done
 
-# Load .env
+# Load .env. The previous `export $(grep -v '^#' "$ENV_FILE" | xargs)` was a
+# minefield: xargs split on whitespace (so any value containing a space broke
+# everything after it), stripped/mangled quotes, expanded $-tokens through
+# the subshell, and treated multi-line values as multiple args. `set -a`
+# tells bash to auto-export every variable until `set +a`, so source-ing
+# the file Just Works for normal KEY=value lines (including values with
+# spaces, quotes, and $-signs).
 ENV_FILE="$(dirname "$0")/.env"
 if [ -f "$ENV_FILE" ]; then
-    export $(grep -v '^\s*#' "$ENV_FILE" | xargs)
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
 else
     echo "ERROR: .env file not found at $ENV_FILE"
     exit 1
@@ -86,8 +95,14 @@ else
     CONTAINER="smartcart-scraper-$$"
     echo "[2/4] Starting Docker crawler as container $CONTAINER ..."
 
+    # Image tag is overridable via $SCRAPER_IMAGE so operators can pin to a
+    # known-good digest (e.g. erlichsefi/...@sha256:...) without editing
+    # this script. Default stays at :latest for convenience, but doing so
+    # means a pipeline that affects what users see can change overnight if
+    # upstream pushes a new image. Pin in env for anything production.
+    SCRAPER_IMAGE="${SCRAPER_IMAGE:-erlichsefi/israeli-supermarket-scarpers:latest}"
     docker run -d --name "$CONTAINER" -v "${TARGET_DIR}:/usr/src/app/dumps" \
-        erlichsefi/israeli-supermarket-scarpers:latest > /dev/null
+        "$SCRAPER_IMAGE" > /dev/null
 
     # Make sure the container is cleaned up even if we're interrupted.
     cleanup() {

@@ -11,7 +11,7 @@ const JoinList = () => {
   useEffect(() => {
     const joinList = async () => {
       try {
-        const { data } = await api.post(`/api/join/${inviteCode}`);
+        const { data } = await api.post(`/api/lists/join/${inviteCode}`);
         setStatus("success");
         setMessage(`הצטרפת בהצלחה לרשימה "${data.listName}"`);
         setTimeout(() => navigate(`/list/${data.listId}`), 2000);

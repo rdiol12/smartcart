@@ -1,7 +1,11 @@
 import React, { useState } from "react";
 import api from "../api";
+import { useNotify } from "../context/NotifyContext";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const InviteLinkModal = ({ show, onClose, listId }) => {
+  useBodyScrollLock(show);
+  const notify = useNotify();
   const [inviteLink, setInviteLink] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -12,16 +16,24 @@ const InviteLinkModal = ({ show, onClose, listId }) => {
       const { data } = await api.post(`/api/lists/${listId}/invite`);
       setInviteLink(data.inviteLink);
     } catch (err) {
-      alert(err.response?.data?.message || "שגיאה ביצירת הקישור");
+      notify(err.response?.data?.message || "שגיאה ביצירת הקישור");
     } finally {
       setLoading(false);
     }
   };
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyLink = async () => {
+    // navigator.clipboard.writeText is unavailable on Safari over http://,
+    // some iOS configs, and any browser without clipboard permission. Without
+    // the try/catch the modal looked like it copied (button text didn't
+    // change because setCopied never ran) and the user got no feedback.
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_err) {
+      notify("העתקה נכשלה. סמן וקריר ידנית.");
+    }
   };
 
   if (!show) return null;

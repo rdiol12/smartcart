@@ -4,7 +4,7 @@
   "description": "השוואת מחירי מוצרי מזון בין הרשתות המובילות בישראל",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
+  "background_color": "#f0f2f5",
   "theme_color": "#4f46e5",
   "orientation": "portrait",
   "icons": [

@@ -1,8 +1,11 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import { authenticateToken } from "../middleware/auth.js";
+import { kidRequestValidator } from "../middleware/validators.js";
 import { logger } from "../utils/logger.js";
 import db from "../utils/db.js";
+import logActivity from "../utils/logActivity.js";
+import { messages } from "../utils/messages.js";
 
 const router = Router();
 const saltRounds = 10;
@@ -20,10 +23,10 @@ router.post("/create-child", async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       return res
         .status(400)
-        .json({ message: "Password must be at least 6 characters" });
+        .json({ message: "Password must be at least 8 characters" });
     }
 
     // Check if requesting user is a child (prevent grandchildren)
@@ -177,6 +180,22 @@ router.post("/lists/:id/children/:childId", async (req, res) => {
   const { id: listId, childId } = req.params;
 
   try {
+    // Parent must themselves be an admin of the list to grant access to it.
+    // Without this the endpoint accepted any list id and would happily insert
+    // a child as a member of any list in the database.
+    const parentMembership = await db.query(
+      "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
+      [listId, req.userId],
+    );
+    if (parentMembership.rows.length === 0) {
+      return res.status(403).json({ message: "Not a member of this list" });
+    }
+    if (parentMembership.rows[0].status !== "admin") {
+      return res
+        .status(403)
+        .json({ message: "Only the list admin can add children" });
+    }
+
     // Verify child belongs to this parent
     const child = await db.query(
       "SELECT id FROM app2.users WHERE id = $1 AND parent_id = $2",
@@ -208,6 +227,21 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
   const { id: listId, childId } = req.params;
 
   try {
+    // Same admin gate as the POST counterpart — only the list admin can
+    // revoke a child's membership.
+    const parentMembership = await db.query(
+      "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
+      [listId, req.userId],
+    );
+    if (parentMembership.rows.length === 0) {
+      return res.status(403).json({ message: "Not a member of this list" });
+    }
+    if (parentMembership.rows[0].status !== "admin") {
+      return res
+        .status(403)
+        .json({ message: "Only the list admin can remove children" });
+    }
+
     const child = await db.query(
       "SELECT id FROM app2.users WHERE id = $1 AND parent_id = $2",
       [childId, req.userId],
@@ -294,7 +328,7 @@ router.get("/kid-requests/my", async (req, res) => {
  * POST /api/kid-requests
  * Child requests to add item
  */
-router.post("/kid-requests", async (req, res) => {
+router.post("/kid-requests", kidRequestValidator, async (req, res) => {
   const { listId, itemName, price, storeName, quantity, productId } = req.body;
   const io = req.app.locals.io;
 
@@ -312,12 +346,24 @@ router.post("/kid-requests", async (req, res) => {
     const parentId = userRes.rows[0].parent_id;
     const childName = userRes.rows[0].first_name;
 
+    // Verify the child is actually a member of the list they're requesting
+    // for. Without this check, a child could spam requests against arbitrary
+    // listIds and the parent would get push notifications about lists they
+    // don't own.
+    const childMembership = await db.query(
+      "SELECT 1 FROM app.list_members WHERE list_id = $1 AND user_id = $2",
+      [listId, req.userId],
+    );
+    if (childMembership.rows.length === 0) {
+      return res.status(403).json({ message: "Not a member of this list" });
+    }
+
     // Get list name
     const listRes = await db.query(
       "SELECT list_name FROM app.list WHERE id = $1",
       [listId],
     );
-    const listName = listRes.rows[0]?.list_name || "רשימה";
+    const listName = listRes.rows[0]?.list_name || messages.fallback_list_name;
 
     const result = await db.query(
       `INSERT INTO app2.kid_requests (child_id, parent_id, list_id, item_name, price, store_name, quantity, product_id)
@@ -391,16 +437,35 @@ router.post("/kid-requests/:id/resolve", async (req, res) => {
     const request = requestResult.rows[0];
     const newStatus = action === "approve" ? "approved" : "rejected";
 
+    // For approval, re-check that the parent is still a member of the list
+    // at approval time. Membership could have changed between the child's
+    // request and now. Also enforce that the item insertion mirrors what
+    // socket send_item / REST POST /lists/:id/items do: include sort_order,
+    // emit receive_item, write activity_log. Previously these were silently
+    // missing on every parent-approved addition.
+    if (action === "approve") {
+      const parentStillMember = await db.query(
+        "SELECT 1 FROM app.list_members WHERE list_id = $1 AND user_id = $2",
+        [request.list_id, req.userId],
+      );
+      if (parentStillMember.rows.length === 0) {
+        return res
+          .status(403)
+          .json({ message: "You are no longer a member of this list" });
+      }
+    }
+
     await db.query("UPDATE app2.kid_requests SET status = $1 WHERE id = $2", [
       newStatus,
       requestId,
     ]);
 
-    // If approved, add the item to the list
     if (action === "approve") {
       const itemResult = await db.query(
-        `INSERT INTO app.list_items (listId, itemName, price, storeName, quantity, addby, addat, updatedat, product_id)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7)
+        `INSERT INTO app.list_items
+           (listid, itemname, price, storename, quantity, addby, addat, updatedat, product_id, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7,
+                 COALESCE((SELECT MAX(sort_order) FROM app.list_items WHERE listid = $1), 0) + 1)
          RETURNING *`,
         [
           request.list_id,
@@ -412,11 +477,18 @@ router.post("/kid-requests/:id/resolve", async (req, res) => {
           request.product_id || null,
         ],
       );
+      const newItem = itemResult.rows[0];
 
-      // Emit to list room
       if (io) {
-        io.to(String(request.list_id)).emit("receive_item", itemResult.rows[0]);
+        io.to(String(request.list_id)).emit("receive_item", newItem);
       }
+
+      await logActivity(
+        request.list_id,
+        request.child_id,
+        "item_added",
+        `Added item: ${request.item_name}`,
+      );
     }
 
     // Notify the child

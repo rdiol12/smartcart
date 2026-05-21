@@ -55,14 +55,21 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (originalRequest.url.includes("/api/refresh")) {
+    // Exact match — substring matching would also skip retry for any
+    // future endpoint with "refresh" in its name (e.g. /api/refresh-feed).
+    if (originalRequest.url === "/api/refresh") {
       return Promise.reject(error);
     }
 
-    // Only 401 ("token expired / invalid") is recoverable via refresh.
-    // 403 means "authenticated but forbidden" — a fresh token won't change
-    // that, retrying would just double the work and obscure the real error.
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Only TOKEN_EXPIRED is recoverable via refresh. TOKEN_INVALID (bad
+    // signature, wrong type, tampered) and TOKEN_MISSING mean a fresh access
+    // token won't fix anything — don't burn a refresh round-trip on them.
+    // 403 means "authenticated but forbidden", also not refresh-recoverable.
+    const status = error.response?.status;
+    const code = error.response?.data?.code;
+    const isExpired =
+      status === 401 && (code === "TOKEN_EXPIRED" || code === undefined);
+    if (isExpired && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
         const newToken = await refreshAccessToken();

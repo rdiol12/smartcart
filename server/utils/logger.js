@@ -59,7 +59,7 @@ const logger = winston.createLogger({
 // Request logging middleware
 const requestLogger = (req, res, next) => {
   const start = Date.now();
-  
+
   res.on('finish', () => {
     const duration = Date.now() - start;
     logger.info('HTTP Request', {
@@ -68,10 +68,11 @@ const requestLogger = (req, res, next) => {
       status: res.statusCode,
       duration: `${duration}ms`,
       ip: req.ip,
-      userAgent: req.get('user-agent')
+      userAgent: req.get('user-agent'),
+      correlationId: req.correlationId,
     });
   });
-  
+
   next();
 };
 
@@ -82,7 +83,8 @@ const errorLogger = (err, req, res, next) => {
     stack: err.stack,
     method: req.method,
     url: req.url,
-    ip: req.ip
+    ip: req.ip,
+    correlationId: req.correlationId,
   });
   next(err);
 };

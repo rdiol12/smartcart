@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import api from "../api";
 import { useNotify } from "../context/NotifyContext";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const Store = () => {
   const { user, isLinkedChild } = useContext(AuthContext);
@@ -26,6 +27,8 @@ const Store = () => {
   const [addingToList, setAddingToList] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [quantity, setQuantity] = useState(1);
+
+  useBodyScrollLock(selectedProduct !== null);
 
   // Load recent searches on mount
   React.useEffect(() => {
@@ -358,14 +361,18 @@ const Store = () => {
             <div className="d-flex flex-column gap-3">
               {products.map((product, index) => (
                 <div
-                  key={`${product.id}-${product.chain_id}-${index}`}
+                  // /api/search aliases `i.id AS item_id`, so the field is
+                  // `item_id`, not `id`. The previous `product.id` was
+                  // undefined on every row — the React key was
+                  // "undefined-7-0" and the navigate landed on /product/undefined.
+                  key={`${product.item_id}-${product.chain_id}-${index}`}
                   className="sc-product-row"
                 >
                   <div
                     className="d-flex align-items-center gap-3 flex-grow-1"
                     style={{ cursor: "pointer", minWidth: 0 }}
                     onClick={() =>
-                      navigate(`/product/${product.id}`, {
+                      navigate(`/product/${product.item_id}`, {
                         state: { product },
                       })
                     }

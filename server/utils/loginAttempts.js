@@ -34,7 +34,10 @@ export async function lockoutMsRemaining(identifier) {
     [identifier],
   );
   if (rows.length === 0) return 0;
-  return Math.max(0, Math.ceil(Number(rows[0].ms)));
+  // Defensive: if the math returns NaN/Infinity for any reason (clock weirdness,
+  // unexpected NULL), don't propagate that into "Try again in NaN minute(s)".
+  const ms = Number(rows[0].ms);
+  return Number.isFinite(ms) ? Math.max(0, Math.ceil(ms)) : 0;
 }
 
 export async function recordFailedLogin(identifier) {
