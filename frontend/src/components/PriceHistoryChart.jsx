@@ -69,7 +69,7 @@ const PriceHistoryChart = ({ productId }) => {
       muted:  cs.getPropertyValue('--sc-text-muted').trim()  || '#64748b',
       border: cs.getPropertyValue('--sc-border').trim()      || '#e2e8f0',
     };
-  }, [priceHistory]);
+  }, []);
 
   // Build the chart payload from priceHistory. Key correctness point: every
   // chain's data array is aligned to the same `labels` axis (union of all

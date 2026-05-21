@@ -5,7 +5,6 @@ import { useNotify } from "../context/NotifyContext";
 const ProductFilter = ({ onFilterChange }) => {
   const notify = useNotify();
   const [categories, setCategories] = useState([]);
-  const [chains, setChains] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
@@ -21,19 +20,12 @@ const ProductFilter = ({ onFilterChange }) => {
   }, [onFilterChange]);
 
   useEffect(() => {
-    const fetchFilters = async () => {
-      try {
-        const [catRes, chainRes] = await Promise.all([
-          api.get("/api/categories"),
-          api.get("/api/chains-list"),
-        ]);
-        setCategories(catRes.data.categories || []);
-        setChains(chainRes.data.chains || []);
-      } catch (err) {
-        notify(err.response?.data?.message || "שגיאה בטעינת המסננים");
-      }
-    };
-    fetchFilters();
+    api
+      .get("/api/categories")
+      .then(({ data }) => setCategories(data.categories || []))
+      .catch((err) =>
+        notify(err.response?.data?.message || "שגיאה בטעינת המסננים"),
+      );
   }, [notify]);
 
   useEffect(() => {

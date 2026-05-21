@@ -106,13 +106,7 @@ app.use("/api/price-alerts", price_alerts);
 app.use("/api/activity/feed", activity_feed);
 app.use("/api/templates", templatesRoutes);
 
-// Cron job: Daily price snapshot (runs at 2 AM every day).
-//
-// Every pod runs this cron, so under horizontal scaling we'd take N snapshots
-// instead of one and double-insert into price_history. Guard with a Postgres
-// advisory lock: whichever pod grabs LOCK_PRICE_SNAPSHOT runs the work; the
-// rest skip cleanly. The lock is session-scoped on a dedicated client and
-// released in the finally block.
+
 const LOCK_PRICE_SNAPSHOT = 4242424242;
 cron.schedule("0 2 * * *", async () => {
   const client = await db.connect();

@@ -23,17 +23,15 @@ import db from "../utils/db.js";
 const router = Router();
 const saltRounds = 10;
 
-/**
- * Cookie attributes for the refresh-token cookie.
- * Prod: secure + sameSite=none so it works cross-origin over HTTPS.
- * Dev:  insecure + sameSite=lax so it survives plain-HTTP localhost.
- */
+// Refresh-token cookie. Deployment is same-origin (nginx proxies /api), so
+// sameSite=lax is correct — sameSite=none triggers Safari iOS's stricter
+// cross-site handling and was the cause of cookies not persisting there.
 const refreshCookieOptions = () => {
   const isProd = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax",
+    sameSite: "lax",
     path: "/",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   };
@@ -568,12 +566,14 @@ router.post("/reset-password", passwordResetLimiter, async (req, res) => {
   }
 });
 
-// ─── Protected routes (auth required) ───────────────────────────────────────
-router.use(authenticateToken);
+// ─── Protected routes (auth required) ──────────────────────────────────────
+// authenticateToken is applied per-route — router.use(mw) here would match
+// every path entering this router (mounted at /api), 401-ing requests like
+// /api/products/:id that should fall through to productsRoutes.
 /**
  * GET /api/me
  */
-router.get("/me", async (req, res) => {
+router.get("/me", authenticateToken, async (req, res) => {
 
   try {
     const results = await db.query(
@@ -595,7 +595,7 @@ router.get("/me", async (req, res) => {
 /**
  * POST /api/logout-all
  */
-router.post("/logout-all", async (req, res) => {
+router.post("/logout-all", authenticateToken, async (req, res) => {
 
   try {
     await db.query(
@@ -618,7 +618,7 @@ router.post("/logout-all", async (req, res) => {
 /**
  * PUT /api/user/password
  */
-router.put("/user/password", async (req, res) => {
+router.put("/user/password", authenticateToken, async (req, res) => {
   const { currentPassword, newPassword, confirmNewPassword } = req.body;
 
   if (!currentPassword || !newPassword || !confirmNewPassword) {
@@ -684,7 +684,7 @@ router.put("/user/password", async (req, res) => {
  * confirmation. Cascade: app2.tokens, child users (parent_id), and
  * app2.kid_requests are removed automatically via FK ON DELETE CASCADE.
  */
-router.delete("/user", async (req, res) => {
+router.delete("/user", authenticateToken, async (req, res) => {
   const { password } = req.body;
 
   if (!password) {

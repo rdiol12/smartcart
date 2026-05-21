@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import api from "../api";
@@ -20,7 +20,7 @@ const MyLists = () => {
   const [requests, setRequests] = useState([]);
   const [activeTab, setActiveTab] = useState("lists"); // "lists" or "requests"
 
-  const fetchLists = async () => {
+  const fetchLists = useCallback(async () => {
     try {
       const { data } = await api.get("/api/lists");
       setLists(data.lists);
@@ -29,22 +29,21 @@ const MyLists = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notify]);
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     try {
       const { data } = await api.get("/api/family/kid-requests/my");
       setRequests(data.requests);
     } catch (err) {
       notify(err.response?.data?.message || "שגיאה בטעינת הבקשות");
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     fetchLists();
     if (isLinkedChild) {
       fetchRequests();
-      // Listen for request resolution in real-time
       const onResolved = (data) => {
         setRequests((prev) =>
           prev.map((r) =>
@@ -55,7 +54,7 @@ const MyLists = () => {
       socket.on("request_resolved", onResolved);
       return () => socket.off("request_resolved", onResolved);
     }
-  }, [isLinkedChild]);
+  }, [isLinkedChild, fetchLists, fetchRequests]);
 
   const handleCreated = (listId) => {
     navigate(`/list/${listId}`);

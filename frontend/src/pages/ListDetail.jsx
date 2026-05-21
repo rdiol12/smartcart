@@ -13,7 +13,7 @@ import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const ListDetail = () => {
   const { listId } = useParams();
-  const { user, isLinkedChild } = useContext(AuthContext);
+  const { isLinkedChild } = useContext(AuthContext);
   const navigate = useNavigate();
   const notify = useNotify();
 
@@ -120,7 +120,7 @@ const ListDetail = () => {
       socket.off("item_paid", onItemPaid);
       socket.off("item_unpaid", onItemUnpaid);
     };
-  }, [listId, navigate]);
+  }, [listId, navigate, notify]);
 
   const [requestMsg, setRequestMsg] = useState("");
 
@@ -149,7 +149,7 @@ const ListDetail = () => {
         });
         setRequestMsg("הבקשה נשלחה לאישור ההורה");
         setTimeout(() => setRequestMsg(""), 3000);
-      } catch (err) {
+      } catch (_err) {
         setRequestMsg("שגיאה בשליחת הבקשה");
         setTimeout(() => setRequestMsg(""), 3000);
       }

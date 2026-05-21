@@ -31,7 +31,7 @@ const ItemComments = ({ itemId, listId }) => {
     };
     socket.on("receive_comment", handleNewComment);
     return () => socket.off("receive_comment", handleNewComment);
-  }, [itemId, listId]);
+  }, [itemId, listId, notify]);
 
   const userComment = comments.find((c) => c.user_id === user.id);
   const hasCommented = !!userComment;

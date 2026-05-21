@@ -1,12 +1,5 @@
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useMemo,
-  useRef,
-} from "react";
-
-const NotifyContext = createContext(null);
+import React, { useState, useMemo, useRef } from "react";
+import { NotifyContext } from "./NotifyContext";
 
 function extractMessage(value) {
   if (typeof value === "string") return value;
@@ -22,11 +15,7 @@ export function NotifyProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
 
-  // Expose both `notify(message, type)` (positional, existing callers) and
-  // `notify.error / notify.success / notify.info` (named, clearer for new
-  // callers). The function-with-methods shape keeps backwards compatibility
-  // for the ~15 existing call sites while giving future callers a less
-  // ambiguous API.
+  // notify(msg, type) for positional callers; notify.error/success/info for named.
   const notify = useMemo(() => {
     const fn = (value, type = "error", durationMs = 5000) => {
       const id = ++idRef.current;
@@ -84,12 +73,4 @@ export function NotifyProvider({ children }) {
       </div>
     </NotifyContext.Provider>
   );
-}
-
-export function useNotify() {
-  const ctx = useContext(NotifyContext);
-  if (!ctx) {
-    throw new Error("useNotify must be used within NotifyProvider");
-  }
-  return ctx;
 }

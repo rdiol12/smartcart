@@ -25,7 +25,7 @@ const BarcodeScanner = ({ onResult, onClose }) => {
         try {
           const { data } = await api.get(`/api/items/barcode/${decodedText}`);
           onResult({ ...data.item, prices: data.prices });
-        } catch (err) {
+        } catch (_err) {
           setError(`מוצר עם ברקוד ${decodedText} לא נמצא`);
         }
       },
@@ -34,7 +34,11 @@ const BarcodeScanner = ({ onResult, onClose }) => {
 
     scannerRef.current = scanner;
     return () => {
-      try { scanner.clear(); } catch (e) {}
+      try {
+        scanner.clear();
+      } catch {
+        // scanner already torn down — safe to ignore
+      }
     };
   }, [onResult]);
 

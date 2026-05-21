@@ -6,7 +6,7 @@ import { useNotify } from "../context/NotifyContext";
 import { clearSession } from "../auth/logoutSession";
 
 const Profile = () => {
-  const { user, setUser, loading, isLinkedChild } = useContext(AuthContext);
+  const { setUser, loading, isLinkedChild } = useContext(AuthContext);
   const navigate = useNavigate();
   const notify = useNotify();
 

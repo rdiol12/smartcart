@@ -5,18 +5,27 @@ import api from "../api";
 
 const Home = () => {
   const { user, isLinkedChild } = useContext(AuthContext);
-  const [lists, setLists] = useState([]);
-  const [loadingLists, setLoadingLists] = useState(false);
+  // lists === null means "still loading"; the effect sets [] or the data.
+  const [lists, setLists] = useState(null);
 
   useEffect(() => {
     if (!user) return;
-    setLoadingLists(true);
+    let cancelled = false;
     api
       .get("/api/lists")
-      .then(({ data }) => setLists(data.lists || []))
-      .catch(() => {})
-      .finally(() => setLoadingLists(false));
+      .then(({ data }) => {
+        if (!cancelled) setLists(data.lists || []);
+      })
+      .catch(() => {
+        if (!cancelled) setLists([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
+
+  const loadingLists = user && lists === null;
+  const safeLists = lists || [];
 
   if (!user) {
     return (
@@ -128,7 +137,7 @@ const Home = () => {
             <div className="text-center py-4">
               <div className="sc-spinner" style={{ margin: "0 auto" }}></div>
             </div>
-          ) : lists.length === 0 ? (
+          ) : safeLists.length === 0 ? (
             <div className="sc-card">
               <div className="sc-empty" style={{ padding: "2rem" }}>
                 <p style={{ color: "var(--sc-text-muted)" }}>
@@ -143,7 +152,7 @@ const Home = () => {
             </div>
           ) : (
             <div className="row g-3">
-              {lists.slice(0, 6).map((list) => (
+              {safeLists.slice(0, 6).map((list) => (
                 <div key={list.id} className="col-md-6 col-lg-4">
                   <Link to={`/list/${list.id}`} className="text-decoration-none">
                     <div className="sc-card sc-card-interactive p-3">

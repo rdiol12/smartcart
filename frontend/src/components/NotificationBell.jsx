@@ -31,7 +31,7 @@ const NotificationBell = () => {
     };
     socket.on("new_kid_request", onNewRequest);
     return () => socket.off("new_kid_request", onNewRequest);
-  }, []);
+  }, [notify]);
 
   // Close panel on outside click
   useEffect(() => {
