@@ -23,15 +23,18 @@ import db from "../utils/db.js";
 const router = Router();
 const saltRounds = 10;
 
-// Refresh-token cookie. Deployment is same-origin (nginx proxies /api), so
-// sameSite=lax is correct — sameSite=none triggers Safari iOS's stricter
-// cross-site handling and was the cause of cookies not persisting there.
+// Refresh-token cookie. Production is cross-origin (frontend on
+// smartcartapp.net, backend on smartcart-*.onrender.com) — vercel.json has no
+// /api rewrite, so the browser hits Render directly. That requires
+// sameSite=none + secure; lax blocks the cookie on cross-origin requests.
+// Safari iOS may still ITP-block third-party cookies; the durable fix is
+// deploying the backend on api.smartcartapp.net so the cookie is first-party.
 const refreshCookieOptions = () => {
   const isProd = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: "lax",
+    sameSite: isProd ? "none" : "lax",
     path: "/",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   };

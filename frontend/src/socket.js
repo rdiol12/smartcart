@@ -7,8 +7,11 @@ import { io } from "socket.io-client";
 // during plain `npm run dev` against a backend on a different port.
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+// withCredentials matches the axios client so any session affinity cookies
+// (cf/render edge) ride along on the cross-origin /socket.io handshake.
 const socket = io(API_URL, {
   autoConnect: false,
+  withCredentials: true,
 });
 
 export default socket;
