@@ -1,0 +1,48 @@
+# Node modules
+node_modules/
+*/node_modules/
+*/neon_upload
+
+# Environment variables
+.env
+*.env
+*.ps1
+
+# Price data directory
+my_prices/
+
+# XML files
+*.xml
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*/Logs
+server/logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+docs/
+
+# Build files
+dist/
+build/
+
+# Backup files
+*.backup
+deleted_zero_prices_backup.json
+
+null_columns_report.json
+null_fields_xml_analysis.json
+
+# SQL dumps
+*.sql
+backup*.sql
+smartcart_dump_*.sql
