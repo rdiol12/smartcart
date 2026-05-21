@@ -4,10 +4,6 @@
       "source": "/api/:path*",
       "destination": "https://smartcart-1-nc1b.onrender.com/api/:path*"
     },
-    {
-      "source": "/socket.io/:path*",
-      "destination": "https://smartcart-1-nc1b.onrender.com/socket.io/:path*"
-    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

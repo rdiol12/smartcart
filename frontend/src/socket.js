@@ -1,15 +1,16 @@
 import { io } from "socket.io-client";
 
-// Match api.js's fallback so the socket connects to the same host the REST
-// client does. Previously this passed `undefined` to io() when VITE_API_URL
-// was unset, which makes socket.io-client default to window.location.origin
-// — fine for production behind the nginx reverse proxy, silently broken
-// during plain `npm run dev` against a backend on a different port.
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+// REST goes through Vercel rewrites so cookies stay first-party (Safari ITP),
+// but socket.io can't ride the same proxy: Vercel Hobby kills long-polling at
+// ~10s while engine.io holds polls open for ~25s, so emits die silently with
+// no error. Socket talks straight to Render — cross-origin is fine because
+// it authenticates via socket.auth.token, not the cookie.
+const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:8000";
 
-// withCredentials matches the axios client so any session affinity cookies
-// (cf/render edge) ride along on the cross-origin /socket.io handshake.
-const socket = io(API_URL, {
+const socket = io(SOCKET_URL, {
   autoConnect: false,
   withCredentials: true,
 });
