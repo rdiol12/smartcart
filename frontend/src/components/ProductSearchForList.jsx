@@ -22,8 +22,8 @@ const ProductSearchForList = ({ onSelect }) => {
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const { data } = await api.get(`/api/store?q=${encodeURIComponent(value.trim())}&limit=8`);
-        setResults(Array.isArray(data.products) ? data.products : []);
+        const { data } = await api.get(`/api/search?q=${encodeURIComponent(value.trim())}&limit=8`);
+        setResults(Array.isArray(data.rows) ? data.rows : []);
       } catch (err) {
         notify(err.response?.data?.message || "שגיאה בחיפוש");
       } finally {
@@ -33,12 +33,7 @@ const ProductSearchForList = ({ onSelect }) => {
   };
 
   const handleSelect = (item) => {
-    onSelect({
-      id: item.item_id,
-      name: item.item_name,
-      price: item.price,
-      chain_name: item.chain_name,
-    });
+    onSelect(item);
     setQuery("");
     setResults([]);
   };
