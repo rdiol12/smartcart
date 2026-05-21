@@ -23,18 +23,16 @@ import db from "../utils/db.js";
 const router = Router();
 const saltRounds = 10;
 
-// Refresh-token cookie. Production is cross-origin (frontend on
-// smartcartapp.net, backend on smartcart-*.onrender.com) — vercel.json has no
-// /api rewrite, so the browser hits Render directly. That requires
-// sameSite=none + secure; lax blocks the cookie on cross-origin requests.
-// Safari iOS may still ITP-block third-party cookies; the durable fix is
-// deploying the backend on api.smartcartapp.net so the cookie is first-party.
+// Refresh-token cookie. Production traffic flows through Vercel rewrites
+// (frontend/vercel.json) so the browser sees /api as same-origin with
+// smartcartapp.net — sameSite=lax is correct and avoids Safari iOS ITP
+// treating the cookie as third-party.
 const refreshCookieOptions = () => {
   const isProd = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax",
+    sameSite: "lax",
     path: "/",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   };
