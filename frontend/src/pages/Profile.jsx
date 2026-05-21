@@ -1,8 +1,9 @@
 import React, { useState, useContext } from "react";
 import { AuthContext } from "../context/AuthContext";
-import api, { setAccessToken } from "../api";
+import api from "../api";
 import { useNavigate, Link } from "react-router-dom";
 import { useNotify } from "../context/NotifyContext";
+import { clearSession } from "../auth/logoutSession";
 
 const Profile = () => {
   const { user, setUser, loading, isLinkedChild } = useContext(AuthContext);
@@ -31,10 +32,6 @@ const Profile = () => {
       setMessage({ type: "error", text: "הסיסמה החדשה חייבת להיות באורך 8 תווים לפחות" });
       return;
     }
-    if (currentPassword.length < 8) {
-      setMessage({ type: "error", text: "הסיסמה הנוכחית חייבת להיות באורך 8 תווים לפחות" });
-      return;
-    }
     if (currentPassword === newPassword) {
       setMessage({ type: "error", text: "הסיסמה החדשה חייבת להיות שונה מהסיסמה הנוכחית" });
       return;
@@ -55,9 +52,7 @@ const Profile = () => {
       // remain valid for up to ~15 min until exp) and bounce to /login.
       // Only on success — a failed change shouldn't log the user out.
       if (data?.loggedOut) {
-        setAccessToken(null);
-        setUser(null);
-        navigate("/login");
+        await clearSession({ setUser, navigate, callServer: false });
       } else {
         setMessage({ type: "success", text: "הסיסמה שונתה בהצלחה" });
       }
@@ -71,23 +66,12 @@ const Profile = () => {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await api.post("/api/logout");
-    } catch (_err) {
-      // Server-side logout failure isn't user-actionable — we still clear
-      // local state and navigate to /login below.
-    } finally {
-      setUser(null);
-      navigate("/login");
-    }
-  };
+  const handleLogout = () => clearSession({ setUser, navigate });
 
   const handleLogoutAllDevices = async () => {
     try {
       await api.post("/api/logout-all");
-      setUser(null);
-      navigate("/login");
+      await clearSession({ setUser, navigate, callServer: false });
     } catch (err) {
       notify(err.response?.data?.message || "שגיאה בהתנתקות מכל המכשירים");
     }
@@ -99,14 +83,10 @@ const Profile = () => {
       setMessage({ type: "error", text: "יש להזין את הסיסמה כדי לאשר מחיקה" });
       return;
     }
-    if (!window.confirm("האם אתה בטוח? מחיקת החשבון היא פעולה בלתי הפיכה.")) {
-      return;
-    }
     setDeleting(true);
     try {
       await api.delete("/api/user", { data: { password: deletePassword } });
-      setUser(null);
-      navigate("/login");
+      await clearSession({ setUser, navigate, callServer: false });
     } catch (err) {
       setMessage({
         type: "error",
@@ -155,15 +135,15 @@ const Profile = () => {
                   <form onSubmit={handleChangePassword}>
                     <div className="mb-3">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה נוכחית</label>
-                      <input type="password" className="form-control sc-input" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} dir="ltr" />
+                      <input type="password" className="form-control sc-input" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" dir="ltr" />
                     </div>
                     <div className="mb-3">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} dir="ltr" />
+                      <input type="password" className="form-control sc-input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" dir="ltr" />
                     </div>
                     <div className="mb-4">
                       <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>אישור סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} dir="ltr" />
+                      <input type="password" className="form-control sc-input" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} autoComplete="new-password" dir="ltr" />
                     </div>
                     <button type="submit" className="sc-btn sc-btn-ghost w-100" disabled={saving} style={{ padding: "10px" }}>
                       עדכן סיסמה
@@ -215,7 +195,15 @@ const Profile = () => {
                   {!showDelete ? (
                     <button
                       className="sc-btn sc-btn-ghost w-100"
-                      onClick={() => setShowDelete(true)}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "האם אתה בטוח? מחיקת החשבון היא פעולה בלתי הפיכה.",
+                          )
+                        ) {
+                          setShowDelete(true);
+                        }
+                      }}
                       style={{ padding: "10px", color: "var(--sc-danger)", borderColor: "rgba(239, 68, 68, 0.3)" }}
                     >
                       <i className="bi bi-trash me-2"></i> מחק את החשבון שלי

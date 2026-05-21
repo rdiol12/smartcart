@@ -58,13 +58,7 @@ export async function ensureSchema() {
     logger.warn("price_history unique index skipped", { error: err.message });
   }
 
-  // app.items.image_url was missing from init.sql but selected by the barcode
-  // endpoint and rendered by half the frontend (Store, ProductPage,
-  // ListItemRow, ProductSearchForList). Result: every barcode lookup threw
-  // "column image_url does not exist", got swallowed by the catch, and the
-  // UI reported "product not found" for every scan. Add the column; once
-  // populated, the existing `image_url ? <img> : <placeholder>` branches
-  // become reachable.
+  // app.items.image_url missing from init.sql; barcode endpoint selects it.
   await db.query(
     `ALTER TABLE app.items ADD COLUMN IF NOT EXISTS image_url VARCHAR(500)`,
   );

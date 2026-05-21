@@ -34,6 +34,10 @@ const searchProductValidator = [
   query("q").trim().isLength({ min: 1, max: 200 }),
   query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
   query("offset").optional().isInt({ min: 0 }).toInt(),
+  query("category").optional({ values: "falsy" }).isString().isLength({ max: 100 }),
+  query("minPrice").optional({ values: "falsy" }).isFloat({ min: 0 }).toFloat(),
+  query("maxPrice").optional({ values: "falsy" }).isFloat({ min: 0 }).toFloat(),
+  query("sort").optional({ values: "falsy" }).isIn(["price_asc", "price_desc", "name_asc"]),
   validate,
 ];
 

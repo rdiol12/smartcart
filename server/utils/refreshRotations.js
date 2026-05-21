@@ -23,7 +23,8 @@ import { logger } from "./logger.js";
  * GRACE_SECONDS of the legitimate use gets a fresh access token. Outside
  * the window, theft detection still fires.
  */
-const GRACE_SECONDS = 10;
+// 60s covers Safari iOS tab-restore; previous 10s was nuking legit users.
+const GRACE_SECONDS = 60;
 
 export async function wasRecentlyRotated(oldTokenId) {
   const { rows } = await db.query(
@@ -49,11 +50,10 @@ export async function recordRotation(oldTokenId) {
   );
 }
 
-// Periodic prune. Sweep window is generous vs the grace check (10s) so we
-// never delete a row that the grace path would still need.
+// Prune rows older than the grace window with margin.
 const sweep = setInterval(() => {
   db.query(
-    "DELETE FROM app2.refresh_rotations WHERE rotated_at < NOW() - INTERVAL '1 minute'",
+    "DELETE FROM app2.refresh_rotations WHERE rotated_at < NOW() - INTERVAL '5 minutes'",
   ).catch((err) =>
     logger.error("Refresh rotation sweep error", { error: err.message }),
   );

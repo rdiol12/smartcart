@@ -3,8 +3,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { ThemeContext } from "../context/ThemeContext";
 import NotificationBell from "./NotificationBell";
-import api, { setAccessToken } from "../api";
-import socket from "../socket";
+import { clearSession } from "../auth/logoutSession";
 
 const NavBar = () => {
   const { user, setUser, loading, isLinkedChild } = useContext(AuthContext);
@@ -17,19 +16,7 @@ const NavBar = () => {
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const closeSidebar = () => setSidebarOpen(false);
 
-  const handleLogout = async () => {
-    try {
-      await api.post("/api/logout");
-    } catch (_err) {
-      // Server-side logout failure isn't user-actionable — we always still
-      // clear local state and navigate to /login below. No toast.
-    } finally {
-      setAccessToken(null);
-      setUser(null);
-      socket.disconnect();
-      navigate("/login");
-    }
-  };
+  const handleLogout = () => clearSession({ setUser, navigate });
 
   const isActive = (path) => location.pathname === path;
 

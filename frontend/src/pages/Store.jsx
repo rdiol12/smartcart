@@ -4,6 +4,7 @@ import { AuthContext } from "../context/AuthContext";
 import api from "../api";
 import { useNotify } from "../context/NotifyContext";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import ProductFilter from "../components/ProductFilter";
 
 const Store = () => {
   const { user, isLinkedChild } = useContext(AuthContext);
@@ -20,6 +21,7 @@ const Store = () => {
   const limit = 20;
   const offsetRef = useRef(0);
   const searchRef = useRef("");
+  const filtersRef = useRef({});
 
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [lists, setLists] = useState([]);
@@ -62,6 +64,11 @@ const Store = () => {
     const currentOffset = reset ? 0 : offsetRef.current;
     try {
       const params = new URLSearchParams({ limit, offset: currentOffset, q });
+      const f = filtersRef.current;
+      if (f.category) params.append("category", f.category);
+      if (f.minPrice) params.append("minPrice", f.minPrice);
+      if (f.maxPrice) params.append("maxPrice", f.maxPrice);
+      if (f.sort) params.append("sort", f.sort);
       const response = await api.get(`/api/search?${params.toString()}`);
       const newProducts = Array.isArray(response.data?.rows)
         ? response.data.rows
@@ -77,6 +84,16 @@ const Store = () => {
       setHasMore(false);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFilterChange = (newFilters) => {
+    filtersRef.current = newFilters;
+    if (searchRef.current.trim()) {
+      offsetRef.current = 0;
+      setLoading(true);
+      setSearched(true);
+      fetchProducts(true);
     }
   };
 
@@ -339,6 +356,11 @@ const Store = () => {
               נסה לחפש עם מילים אחרות
             </p>
           </div>
+        )}
+
+        {/* Filter bar — shown once the user has searched at least once. */}
+        {searched && (
+          <ProductFilter onFilterChange={handleFilterChange} />
         )}
 
         {/* Results */}

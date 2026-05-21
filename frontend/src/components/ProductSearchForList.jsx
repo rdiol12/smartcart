@@ -7,6 +7,7 @@ const ProductSearchForList = ({ onSelect }) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [failedImages, setFailedImages] = useState(() => new Set());
   const timerRef = useRef(null);
 
   const handleChange = (value) => {
@@ -96,7 +97,7 @@ const ProductSearchForList = ({ onSelect }) => {
               onMouseEnter={(e) => e.currentTarget.style.background = "rgba(79,70,229,0.04)"}
               onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
             >
-              {item.image_url ? (
+              {item.image_url && !failedImages.has(item.item_id) ? (
                 <img
                   src={item.image_url}
                   alt={item.item_name}
@@ -109,13 +110,13 @@ const ProductSearchForList = ({ onSelect }) => {
                     border: "1px solid var(--sc-border)",
                     backgroundColor: "#fff",
                   }}
-                  onError={(e) => {
-                    e.target.style.display = "none";
-                    const placeholder = document.createElement("div");
-                    placeholder.style = "width:36px;height:36px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,rgba(79,70,229,0.08),rgba(6,182,212,0.06));display:flex;align-items:center;justify-content:center";
-                    placeholder.innerHTML = '<i class="bi bi-box-seam" style="font-size:0.9rem;color:var(--sc-primary)"></i>';
-                    e.target.parentNode.insertBefore(placeholder, e.target);
-                  }}
+                  onError={() =>
+                    setFailedImages((prev) => {
+                      const next = new Set(prev);
+                      next.add(item.item_id);
+                      return next;
+                    })
+                  }
                 />
               ) : (
                 <div style={{

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import api from "../api";
 import { useNotify } from "../context/NotifyContext";
 
@@ -10,6 +10,15 @@ const ProductFilter = ({ onFilterChange }) => {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [sortBy, setSortBy] = useState("");
+
+  // Latest onFilterChange held in a ref so the change-effect below depends
+  // only on the actual filter values, not the parent's callback identity.
+  // Inline `onFilterChange={(f) => ...}` from a parent would otherwise re-run
+  // the effect every parent render.
+  const onFilterChangeRef = useRef(onFilterChange);
+  useEffect(() => {
+    onFilterChangeRef.current = onFilterChange;
+  }, [onFilterChange]);
 
   useEffect(() => {
     const fetchFilters = async () => {
@@ -28,7 +37,7 @@ const ProductFilter = ({ onFilterChange }) => {
   }, [notify]);
 
   useEffect(() => {
-    onFilterChange({
+    onFilterChangeRef.current({
       category: selectedCategory,
       minPrice: minPrice || undefined,
       maxPrice: maxPrice || undefined,

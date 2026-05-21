@@ -29,30 +29,46 @@ router.get("/search", searchLimiter, searchProductValidator, async (req, res) =>
   const offset = Math.max(parseInt(req.query.offset) || 0, 0);
   const containsTerm = `%${search}%`;
   const startsWithTerm = `${search}%`;
+  const category = req.query.category || null;
+  const minPrice = req.query.minPrice != null ? Number(req.query.minPrice) : null;
+  const maxPrice = req.query.maxPrice != null ? Number(req.query.maxPrice) : null;
+  const sort = req.query.sort || null;
+
+  const outerOrder =
+    sort === "price_asc"
+      ? "sub.price ASC NULLS LAST"
+      : sort === "price_desc"
+        ? "sub.price DESC NULLS LAST"
+        : sort === "name_asc"
+          ? "sub.item_name"
+          : "CASE WHEN sub.item_name ILIKE $2 THEN 0 ELSE 1 END, sub.item_name";
 
   try {
     const reply = await db.query(
       `SELECT * FROM (
          SELECT DISTINCT ON (i.id)
-         i.id as item_id,
-         i.name as item_name,
-         i.barcode,
-         i.item_code,
-         p.price,
-         c.id as chain_id,
-         c.name as chain_name,
-         b.branch_name
+           i.id as item_id,
+           i.name as item_name,
+           i.barcode,
+           i.item_code,
+           i.category,
+           p.price,
+           c.id as chain_id,
+           c.name as chain_name,
+           b.branch_name
          FROM app.items i
          LEFT JOIN app.prices p ON p.item_id = i.id
          LEFT JOIN app.branches b ON b.id = p.branch_id
          LEFT JOIN app.chains c ON c.id = b.chain_id
          WHERE i.name ILIKE $1
+           AND ($5::text IS NULL OR i.category = $5)
          ORDER BY i.id, p.price DESC NULLS LAST
        ) sub
-       ORDER BY CASE WHEN sub.item_name ILIKE $2 THEN 0 ELSE 1 END,
-                sub.item_name
+       WHERE ($6::numeric IS NULL OR sub.price >= $6)
+         AND ($7::numeric IS NULL OR sub.price <= $7)
+       ORDER BY ${outerOrder}
        LIMIT $3 OFFSET $4`,
-      [containsTerm, startsWithTerm, limit + 1, offset],
+      [containsTerm, startsWithTerm, limit + 1, offset, category, minPrice, maxPrice],
     );
 
     const hasMore = reply.rows.length > limit;
@@ -63,6 +79,32 @@ router.get("/search", searchLimiter, searchProductValidator, async (req, res) =>
   } catch (e) {
     logger.error("Search error", { error: e.message });
     return res.status(500).json({ rows: [], hasMore: false, nextOffset: 0 });
+  }
+});
+
+router.get("/categories", searchLimiter, async (_req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT DISTINCT category FROM app.items
+       WHERE category IS NOT NULL AND category <> ''
+       ORDER BY category`,
+    );
+    return res.json({ categories: rows.map((r) => r.category) });
+  } catch (err) {
+    logger.error("Categories list error", { error: err.message });
+    return res.status(500).json({ categories: [] });
+  }
+});
+
+router.get("/chains-list", searchLimiter, async (_req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, name FROM app.chains ORDER BY name`,
+    );
+    return res.json({ chains: rows });
+  } catch (err) {
+    logger.error("Chains list error", { error: err.message });
+    return res.status(500).json({ chains: [] });
   }
 });
 

@@ -24,14 +24,6 @@ const Login = () => {
       setError("יש להזין סיסמה");
       return;
     }
-    // Backend's minimum is 8. The client-side guard used to say `< 6` and
-    // returned "wrong password" on 6-7 char attempts, which is a lie — the
-    // request would never reach the server. Match the backend and tell the
-    // user what's actually wrong.
-    if (password.length < 8) {
-      setError("הסיסמה חייבת להיות באורך 8 תווים לפחות");
-      return;
-    }
 
     setLoading(true);
     try {
