@@ -6,6 +6,10 @@ The backend is hosted on Render's free tier, which spins down after
 the issing token alert is expected refresh after 60s and it should work
 
 
+- **Product images** — Currently missing. Product data is sourced from Israeli 
+  supermarket chains but no legitimate image source has been integrated yet. 
+
+
 # SmartCart
 
 A collaborative shopping-list app backed by a live feed of Israeli supermarket prices.
