@@ -79,6 +79,7 @@ try {
     error: err.message,
     stack: err.stack,
   });
+  process.exit(1);
 }
 
 // Middleware
