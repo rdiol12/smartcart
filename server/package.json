@@ -1,6 +1,7 @@
 {
   "type": "module",
   "dependencies": {
+    "@acpr/rate-limit-postgresql": "^1.4.1",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",

@@ -9,41 +9,32 @@ const SOCKET_RATE_BURST = Number(process.env.SOCKET_RATE_BURST) || 50;
 const BUCKET_TTL_MS = 30 * 60 * 1000;
 
 export async function rateLimitOk(userId) {
-  const nowMs = Date.now();
   const client = await db.connect();
   try {
-    await client.query("BEGIN");
     const res = await client.query(
-      `INSERT INTO app.socket_rate_buckets (user_id, tokens, last_refill)
-       VALUES ($1, $2, to_timestamp($3 / 1000.0))
-       ON CONFLICT (user_id) DO UPDATE SET
-         tokens = LEAST(
-           $2,
-           app.socket_rate_buckets.tokens + (
-             EXTRACT(EPOCH FROM (now() - app.socket_rate_buckets.last_refill)) * $4
-           )
-         ),
-         last_refill = now()
-       RETURNING tokens`,
-      [userId, SOCKET_RATE_BURST, nowMs, SOCKET_RATE_PER_SEC],
+      `WITH refilled AS (
+     SELECT LEAST($2::numeric,
+       COALESCE(
+         tokens + EXTRACT(EPOCH FROM (now() - last_refill)) * $3,
+         $2::numeric
+       )
+     ) AS val
+     FROM app.socket_rate_buckets
+     WHERE user_id = $1
+   )
+   INSERT INTO app.socket_rate_buckets (user_id, tokens, last_refill)
+   VALUES ($1, $2::numeric - 1, now())
+   ON CONFLICT (user_id) DO UPDATE SET
+     tokens      = (SELECT val FROM refilled) - 1,
+     last_refill = now()
+   -- WHERE false = insufficient tokens; RETURNING emits no row, rowCount = 0
+   WHERE (SELECT val FROM refilled) >= 1
+   RETURNING tokens`,
+      [userId, SOCKET_RATE_BURST, SOCKET_RATE_PER_SEC],
     );
 
-    const tokens = parseFloat(res.rows[0].tokens);
-    if (tokens < 1) {
-      await client.query("COMMIT");
-      return false;
-    }
-
-    await client.query(
-      "UPDATE app.socket_rate_buckets SET tokens = tokens - 1 WHERE user_id = $1",
-      [userId],
-    );
-    await client.query("COMMIT");
-    return true;
+    return res.rowCount > 0;
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (_e) {}
     logger.error("Token bucket DB error", { error: err.message });
     return true;
   } finally {

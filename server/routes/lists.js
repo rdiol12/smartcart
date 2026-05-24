@@ -8,6 +8,7 @@ import logActivity from "../utils/logActivity.js";
 import comparePrices from "../utils/priceCompare.js";
 import { addItem, reorderItems } from "../services/listItems.js";
 import { messages } from "../utils/messages.js";
+import { kickUserFromList, kickUserEntirely } from "../utils/kickUser.js";
 
 const router = Router();
 router.use(authenticateToken);
@@ -198,9 +199,6 @@ router.delete("/:id", async (req, res) => {
   const listId = req.params.id;
 
   try {
-    // One query covers both membership and role. Avoids the assertMember +
-    // separate-SELECT race that could crash on memberRes.rows[0] if membership
-    // was revoked in between, and saves a round-trip.
     const memberRes = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
@@ -217,6 +215,10 @@ router.delete("/:id", async (req, res) => {
 
     await db.query("DELETE FROM app.list WHERE id = $1", [listId]);
 
+    const io = req.app.locals.io;
+    io.in(String(listId)).socketsLeave(String(listId));
+    io.to(String(listId)).emit("list_deleted", { listId });
+
     return res.json({ success: true, message: "List deleted successfully" });
   } catch (err) {
     logger.error("Error deleting list", {
@@ -231,11 +233,10 @@ router.delete("/:id", async (req, res) => {
  * POST /api/lists/:id/leave
  * Leave a list (members only, not admin)
  */
-router.post("/:id/leave", async (req, res) => {
+jsrouter.post("/:id/leave", async (req, res) => {
   const listId = req.params.id;
 
   try {
-    // One query covers membership + role; mirrors the DELETE /:id pattern.
     const memberRes = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
@@ -256,26 +257,7 @@ router.post("/:id/leave", async (req, res) => {
       [listId, req.userId],
     );
 
-    // Force any open sockets for the leaving user to leave the list room so
-    // they can't keep mutating via an already-open socket connection.
-    try {
-      const io = req.app?.locals?.io;
-      if (io) {
-        const sockets = await io.in(`user_${req.userId}`).allSockets();
-        for (const sid of sockets) {
-          const s = io.sockets.sockets.get(sid);
-          if (s) s.leave(String(listId));
-        }
-        logger.info(
-          `Forced user ${req.userId} sockets to leave list ${listId}`,
-          { count: sockets.size },
-        );
-      }
-    } catch (sockErr) {
-      logger.error("Error forcing user sockets to leave list", {
-        error: sockErr.message,
-      });
-    }
+    kickUserFromList(req.app.locals.io, req.userId, listId);
 
     return res.json({ success: true, message: "Left list successfully" });
   } catch (err) {

@@ -6,6 +6,7 @@ import { logger } from "../utils/logger.js";
 import db from "../utils/db.js";
 import logActivity from "../utils/logActivity.js";
 import { messages } from "../utils/messages.js";
+import { kickUserFromList, kickUserEntirely } from "../utils/kickUser.js";
 
 const router = Router();
 const saltRounds = 10;
@@ -135,7 +136,6 @@ router.delete("/delete-child/:childId", async (req, res) => {
   }
 
   try {
-    // Verify the child belongs to this parent
     const child = await db.query(
       "SELECT id FROM app2.users WHERE id = $1 AND parent_id = $2",
       [childId, req.userId],
@@ -147,8 +147,9 @@ router.delete("/delete-child/:childId", async (req, res) => {
         .json({ message: "Unauthorized or child not found" });
     }
 
-    // Delete the child account (cascade will handle related data)
     await db.query("DELETE FROM app2.users WHERE id = $1", [childId]);
+
+    kickUserEntirely(req.app.locals.io, childId);
 
     return res.json({ message: "Child account deleted" });
   } catch (err) {
@@ -264,8 +265,6 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
   }
 
   try {
-    // Same admin gate as the POST counterpart — only the list admin can
-    // revoke a child's membership.
     const parentMembership = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
@@ -283,7 +282,6 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
       "SELECT id FROM app2.users WHERE id = $1 AND parent_id = $2",
       [childId, req.userId],
     );
-
     if (child.rows.length === 0) {
       return res.status(403).json({ message: "Not your child" });
     }
@@ -293,25 +291,7 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
       [listId, childId],
     );
 
-    // Force any open sockets for the child to leave the list room so a
-    // revoked child cannot continue mutating via an open socket.
-    try {
-      const io = req.app?.locals?.io;
-      if (io) {
-        const sockets = await io.in(`user_${childId}`).allSockets();
-        for (const sid of sockets) {
-          const s = io.sockets.sockets.get(sid);
-          if (s) s.leave(String(listId));
-        }
-        logger.info(`Forced child ${childId} sockets to leave list ${listId}`, {
-          count: sockets.size,
-        });
-      }
-    } catch (sockErr) {
-      logger.error("Error forcing child sockets to leave list", {
-        error: sockErr.message,
-      });
-    }
+    kickUserFromList(req.app.locals.io, childId, listId);
 
     return res.json({ success: true });
   } catch (err) {
