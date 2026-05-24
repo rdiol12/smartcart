@@ -66,22 +66,20 @@ const io = new Server(server, { cors: corsOptions });
 
 // Register all socket events
 registerSocketHandlers(io);
-// In test mode we skip DB bootstrap to allow fast unit tests without a DB.
-if (process.env.NODE_ENV !== "test") {
-  // Test database connection + ensure runtime schema (lockout / rotation tables /
-  // search index). async/await to match the rest of the codebase — callback-style
-  // here was the last holdout.
-  try {
-    await db.query("SELECT NOW()");
-    logger.info("PostgreSQL connected (israel_shopping_db)");
-    await ensureSchema();
-  } catch (err) {
-    logger.error("Database connection or schema bootstrap failed", {
-      error: err.message,
-      stack: err.stack,
-    });
-    process.exit(1);
-  }
+
+// Test database connection + ensure runtime schema (lockout / rotation tables /
+// search index). async/await to match the rest of the codebase — callback-style
+// here was the last holdout.
+try {
+  await db.query("SELECT NOW()");
+  logger.info("PostgreSQL connected (israel_shopping_db)");
+  await ensureSchema();
+} catch (err) {
+  logger.error("Database connection or schema bootstrap failed", {
+    error: err.message,
+    stack: err.stack,
+  });
+  process.exit(1);
 }
 
 // Middleware
