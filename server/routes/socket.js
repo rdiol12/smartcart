@@ -453,17 +453,14 @@ export default function registerSocketHandlers(io) {
       const client = await db.getClient();
       try {
         await client.query("BEGIN");
-        await client.query("BEGIN");
         await assertNotChild(userId);
 
-        const listRes = await client.query(
         const listRes = await client.query(
           "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
           [list_name],
         );
         const newListId = listRes.rows[0].id;
 
-        await client.query(
         await client.query(
           "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, $3)",
           [newListId, userId, "admin"],
@@ -478,12 +475,6 @@ export default function registerSocketHandlers(io) {
             error: "Child accounts cannot create lists",
           });
         }
-        if (e.code === "USER_NOT_FOUND") {
-          return callback({ success: false, error: "User not found" });
-        }
-        logger.error("Create list error", { error: e.message, stack: e.stack });
-        await client.query("ROLLBACK");
-        callback({ success: false, error: "Database error" });
       } finally {
         client.release();
       }
