@@ -10,7 +10,7 @@ const BUCKET_TTL_MS = 30 * 60 * 1000;
 
 export async function rateLimitOk(userId) {
   const nowMs = Date.now();
-  const client = await db.getClient();
+  const client = await db.connect();
   try {
     await client.query("BEGIN");
     const res = await client.query(
