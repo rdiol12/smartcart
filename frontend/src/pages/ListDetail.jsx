@@ -7,7 +7,14 @@ import ListItemRow from "../components/ListItemRow";
 import InviteLinkModal from "../components/InviteLinkModal";
 import SaveAsTemplateModal from "../components/SaveAsTemplateModal";
 import BarcodeScanner from "../components/BarcodeScanner";
+import CompareModal from "../components/CompareModal";
+import ChildrenModal from "../components/ChildrenModal";
 import ProductSearchForList from "../components/ProductSearchForList";
+import CompareModal from "../components/CompareModal";
+import ChildrenModal from "../components/ChildrenModal";
+import AddItemForm from "../components/AddItemForm";
+import ListHeader from "../components/ListHeader";
+import ItemsList from "../components/ItemsList";
 import { useNotify } from "../context/NotifyContext";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
@@ -271,81 +278,18 @@ const ListDetail = () => {
   return (
     <div className="page-fade-in" dir="rtl">
       <div className="container py-4" style={{ maxWidth: "720px" }}>
-        {/* Header */}
-        <div className="d-flex justify-content-between align-items-start mb-3">
-          <div>
-            <button
-              className="sc-btn sc-btn-ghost mb-2"
-              onClick={() => navigate("/list")}
-              style={{ fontSize: "0.8rem", padding: "4px 12px" }}
-            >
-              <i className="bi bi-arrow-right me-1"></i> חזרה
-            </button>
-            <h3 className="fw-bold mb-1">{list?.list_name}</h3>
-            <div
-              className="d-flex align-items-center gap-3"
-              style={{ color: "var(--sc-text-muted)", fontSize: "0.85rem" }}
-            >
-              <span>
-                <i className="bi bi-people me-1"></i>
-                {members.map((m) => m.first_name).join(", ")}
-              </span>
-            </div>
-          </div>
-          {!isLinkedChild && (
-            <div className="d-flex gap-2">
-              {userRole === "admin" && (
-                <>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={() => setShowInvite(true)}
-                    style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-                  >
-                    <i className="bi bi-person-plus me-1"></i> הזמן
-                  </button>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={handleOpenChildren}
-                    style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-                  >
-                    <i className="bi bi-people me-1"></i> ילדים
-                  </button>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={handleDeleteList}
-                    style={{
-                      fontSize: "0.8rem",
-                      padding: "6px 12px",
-                      color: "var(--sc-danger)",
-                    }}
-                  >
-                    <i className="bi bi-trash me-1"></i> מחק
-                  </button>
-                </>
-              )}
-              {userRole === "member" && (
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={handleLeaveList}
-                  style={{
-                    fontSize: "0.8rem",
-                    padding: "6px 12px",
-                    color: "var(--sc-danger)",
-                  }}
-                >
-                  <i className="bi bi-box-arrow-left me-1"></i> עזוב
-                </button>
-              )}
-              <button
-                className="sc-btn sc-btn-ghost"
-                onClick={() => setShowSaveTemplate(true)}
-                style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-              >
-                <i className="bi bi-bookmark me-1"></i> תבנית
-              </button>
-            </div>
-          )}
-        </div>
+        <ListHeader
+          list={list}
+          members={members}
+          userRole={userRole}
+          isLinkedChild={isLinkedChild}
+          navigate={navigate}
+          onOpenInvite={() => setShowInvite(true)}
+          onOpenChildren={handleOpenChildren}
+          onDeleteList={handleDeleteList}
+          onLeaveList={handleLeaveList}
+          onOpenSaveTemplate={() => setShowSaveTemplate(true)}
+        />
 
         {/* Progress bar */}
         {items.length > 0 && (
@@ -406,153 +350,19 @@ const ListDetail = () => {
           </div>
         )}
 
-        {/* Add Item */}
-        <div className="sc-card p-3 mb-3">
-          {selectedProduct ? (
-            /* Selected product - show details + add button */
-            <form onSubmit={handleAddItem}>
-              <div className="d-flex align-items-center gap-3">
-                <div
-                  style={{
-                    width: "38px",
-                    height: "38px",
-                    borderRadius: "10px",
-                    flexShrink: 0,
-                    background:
-                      "linear-gradient(135deg, rgba(79,70,229,0.1), rgba(6,182,212,0.08))",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <i
-                    className="bi bi-box-seam"
-                    style={{ color: "var(--sc-primary)", fontSize: "0.9rem" }}
-                  ></i>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="fw-bold" style={{ fontSize: "0.9rem" }}>
-                    {selectedProduct.item_name}
-                  </div>
-                  <small style={{ color: "var(--sc-text-muted)" }}>
-                    {selectedProduct.price ? `₪${selectedProduct.price}` : ""}
-                    {selectedProduct.chain_name
-                      ? ` · ${selectedProduct.chain_name}`
-                      : ""}
-                  </small>
-                </div>
-                <div
-                  className="d-flex align-items-center gap-2"
-                  style={{
-                    background: "var(--sc-bg)",
-                    borderRadius: "10px",
-                    padding: "4px 8px",
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="sc-icon-btn"
-                    onClick={() => setItemQty(Math.max(1, itemQty - 1))}
-                    style={{ width: "26px", height: "26px" }}
-                  >
-                    <i
-                      className="bi bi-dash"
-                      style={{ fontSize: "0.8rem" }}
-                    ></i>
-                  </button>
-                  <span
-                    className="fw-bold"
-                    style={{
-                      fontSize: "0.9rem",
-                      minWidth: "18px",
-                      textAlign: "center",
-                    }}
-                  >
-                    {itemQty}
-                  </span>
-                  <button
-                    type="button"
-                    className="sc-icon-btn"
-                    onClick={() => setItemQty(itemQty + 1)}
-                    style={{ width: "26px", height: "26px" }}
-                  >
-                    <i
-                      className="bi bi-plus"
-                      style={{ fontSize: "0.8rem" }}
-                    ></i>
-                  </button>
-                </div>
-                <button
-                  type="submit"
-                  className={`sc-btn ${isLinkedChild ? "sc-btn-ghost" : "sc-btn-primary"}`}
-                  style={{ padding: "8px 16px", whiteSpace: "nowrap" }}
-                >
-                  {isLinkedChild ? (
-                    <>
-                      <i className="bi bi-send me-1"></i> בקש
-                    </>
-                  ) : (
-                    <i className="bi bi-plus-lg"></i>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sc-icon-btn"
-                  onClick={clearSelectedProduct}
-                  title="בטל"
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="d-flex gap-2 align-items-start">
-              <div style={{ flexGrow: 1, minWidth: 0 }}>
-                <ProductSearchForList onSelect={handleSelectProduct} />
-              </div>
-              <button
-                type="button"
-                className="sc-icon-btn"
-                onClick={() => setShowScanner(true)}
-                title="סרוק ברקוד"
-              >
-                <i className="bi bi-upc-scan"></i>
-              </button>
-            </div>
-          )}
-          {requestMsg && (
-            <div
-              className="mt-2"
-              style={{
-                fontSize: "0.85rem",
-                color: "var(--sc-primary)",
-                fontWeight: 500,
-              }}
-            >
-              <i className="bi bi-info-circle me-1"></i>
-              {requestMsg}
-            </div>
-          )}
-        </div>
+        <AddItemForm
+          selectedProduct={selectedProduct}
+          itemQty={itemQty}
+          setItemQty={setItemQty}
+          setSelectedProduct={setSelectedProduct}
+          isLinkedChild={isLinkedChild}
+          onSubmit={handleAddItem}
+          onOpenScanner={() => setShowScanner(true)}
+          requestMsg={requestMsg}
+          clearSelectedProduct={clearSelectedProduct}
+        />
 
-        {/* Items List */}
-        {items.length === 0 ? (
-          <div className="sc-card">
-            <div className="sc-empty" style={{ padding: "2rem" }}>
-              <div className="sc-empty-icon">
-                <i className="bi bi-basket"></i>
-              </div>
-              <h4>הרשימה ריקה</h4>
-              <p>הוסף פריטים למעלה כדי להתחיל</p>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {items.map((item) => (
-              <ListItemRow key={item.id} item={item} listId={listId} />
-            ))}
-          </div>
-        )}
+        <ItemsList items={items} listId={listId} />
 
         {/* Modals */}
         <InviteLinkModal
@@ -572,418 +382,19 @@ const ListDetail = () => {
           />
         )}
 
-        {/* Price Comparison Modal */}
-        {showCompare && (
-          <div
-            className="sc-modal-overlay"
-            onClick={() => setShowCompare(false)}
-            dir="rtl"
-          >
-            <div
-              className="sc-modal"
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "560px" }}
-            >
-              <div className="sc-modal-header">
-                <h5>
-                  <i className="bi bi-bar-chart me-2"></i>השוואת מחירים
-                </h5>
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setShowCompare(false)}
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-
-              <div
-                className="sc-modal-body"
-                style={{ maxHeight: "70vh", overflowY: "auto" }}
-              >
-                {compareLoading ? (
-                  <div className="text-center py-5">
-                    <div
-                      className="sc-spinner"
-                      style={{ margin: "0 auto" }}
-                    ></div>
-                    <p
-                      className="mt-3"
-                      style={{ color: "var(--sc-text-muted)" }}
-                    >
-                      מחשב מחירים...
-                    </p>
-                  </div>
-                ) : !compareData ? (
-                  <div
-                    className="text-center py-4"
-                    style={{ color: "var(--sc-text-muted)" }}
-                  >
-                    שגיאה בטעינת ההשוואה
-                  </div>
-                ) : (
-                  <>
-                    {/* Unlinked items warning */}
-                    {compareData.unlinkedCount > 0 && (
-                      <div
-                        style={{
-                          padding: "10px 14px",
-                          borderRadius: "var(--sc-radius)",
-                          marginBottom: "12px",
-                          background: "rgba(245, 158, 11, 0.08)",
-                          border: "1px solid rgba(245, 158, 11, 0.2)",
-                          fontSize: "0.82rem",
-                          color: "#b45309",
-                        }}
-                      >
-                        <i className="bi bi-info-circle me-1"></i>
-                        {compareData.unlinkedCount} פריטים הוזנו ידנית ולא
-                        נכללים בהשוואה
-                      </div>
-                    )}
-
-                    {compareData.linkedCount === 0 ? (
-                      <div
-                        className="text-center py-4"
-                        style={{ color: "var(--sc-text-muted)" }}
-                      >
-                        <i
-                          className="bi bi-link-45deg"
-                          style={{ fontSize: "2rem", opacity: 0.4 }}
-                        ></i>
-                        <p className="mt-2 mb-0">
-                          אין פריטים מקושרים למוצרים בחנות. הוסף פריטים מדף
-                          החנות כדי להשוות מחירים.
-                        </p>
-                      </div>
-                    ) : compareData.chains.length === 0 ? (
-                      <div
-                        className="text-center py-4"
-                        style={{ color: "var(--sc-text-muted)" }}
-                      >
-                        <p className="mb-0">
-                          לא נמצאו מחירים עבור הפריטים ברשימה
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="d-flex flex-column gap-3">
-                        {compareData.chains.map((chain, idx) => (
-                          <div
-                            key={chain.chainId}
-                            style={{
-                              border:
-                                idx === 0
-                                  ? "2px solid var(--sc-success)"
-                                  : "1px solid var(--sc-border)",
-                              borderRadius: "var(--sc-radius)",
-                              overflow: "hidden",
-                            }}
-                          >
-                            {/* Chain header */}
-                            <div
-                              style={{
-                                padding: "12px 16px",
-                                background:
-                                  idx === 0
-                                    ? "rgba(16, 185, 129, 0.06)"
-                                    : "var(--sc-bg)",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                              }}
-                            >
-                              <div className="d-flex align-items-center gap-2">
-                                <i
-                                  className="bi bi-shop"
-                                  style={{
-                                    color:
-                                      idx === 0
-                                        ? "var(--sc-success)"
-                                        : "var(--sc-text-muted)",
-                                  }}
-                                ></i>
-                                <span
-                                  className="fw-bold"
-                                  style={{ fontSize: "0.95rem" }}
-                                >
-                                  {chain.chainName}
-                                </span>
-                                {idx === 0 && (
-                                  <span
-                                    className="sc-badge"
-                                    style={{
-                                      background: "var(--sc-success)",
-                                      color: "#fff",
-                                      fontSize: "0.7rem",
-                                      padding: "2px 8px",
-                                    }}
-                                  >
-                                    הכי זול
-                                  </span>
-                                )}
-                              </div>
-                              <div className="d-flex align-items-center gap-2">
-                                {!chain.complete && (
-                                  <span
-                                    style={{
-                                      fontSize: "0.75rem",
-                                      color: "#b45309",
-                                    }}
-                                  >
-                                    <i className="bi bi-exclamation-triangle me-1"></i>
-                                    חסרים {chain.missingCount}
-                                  </span>
-                                )}
-                                <span
-                                  className="fw-bold"
-                                  style={{
-                                    fontSize: "1.1rem",
-                                    color:
-                                      idx === 0
-                                        ? "var(--sc-success)"
-                                        : "var(--sc-text)",
-                                  }}
-                                >
-                                  ₪{chain.total.toFixed(2)}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Expandable item breakdown */}
-                            <details
-                              style={{
-                                borderTop: "1px solid var(--sc-border)",
-                              }}
-                            >
-                              <summary
-                                style={{
-                                  padding: "8px 16px",
-                                  cursor: "pointer",
-                                  fontSize: "0.8rem",
-                                  color: "var(--sc-text-muted)",
-                                  userSelect: "none",
-                                }}
-                              >
-                                פירוט פריטים ({chain.items.length})
-                              </summary>
-                              <div style={{ padding: "0 16px 12px" }}>
-                                {chain.items.map((ci, i) => (
-                                  <div
-                                    key={i}
-                                    className="d-flex justify-content-between align-items-center"
-                                    style={{
-                                      padding: "6px 0",
-                                      borderBottom:
-                                        i < chain.items.length - 1
-                                          ? "1px solid var(--sc-border)"
-                                          : "none",
-                                      fontSize: "0.82rem",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        color: ci.available
-                                          ? "var(--sc-text)"
-                                          : "#dc2626",
-                                      }}
-                                    >
-                                      {ci.itemName}
-                                      {ci.quantity > 1 && (
-                                        <span
-                                          style={{
-                                            color: "var(--sc-text-muted)",
-                                          }}
-                                        >
-                                          {" "}
-                                          x{ci.quantity}
-                                        </span>
-                                      )}
-                                    </span>
-                                    {ci.available ? (
-                                      <span
-                                        style={{
-                                          color: "var(--sc-text-muted)",
-                                        }}
-                                      >
-                                        ₪{ci.price.toFixed(2)}
-                                        {ci.quantity > 1 &&
-                                          ` = ₪${ci.subtotal.toFixed(2)}`}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        style={{
-                                          color: "#dc2626",
-                                          fontWeight: 600,
-                                        }}
-                                      >
-                                        לא זמין
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </details>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <div className="sc-modal-footer">
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={() => setShowCompare(false)}
-                >
-                  סגור
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Children Management Modal */}
-        {showChildrenModal && (
-          <div
-            className="sc-modal-overlay"
-            onClick={() => setShowChildrenModal(false)}
-            dir="rtl"
-          >
-            <div
-              className="sc-modal"
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "440px" }}
-            >
-              <div className="sc-modal-header">
-                <h5>
-                  <i className="bi bi-people me-2"></i>ניהול גישת ילדים
-                </h5>
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setShowChildrenModal(false)}
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-
-              <div className="sc-modal-body">
-                {childrenLoading ? (
-                  <div className="text-center py-4">
-                    <div
-                      className="sc-spinner"
-                      style={{ margin: "0 auto" }}
-                    ></div>
-                  </div>
-                ) : childrenList.length === 0 ? (
-                  <div
-                    className="text-center py-4"
-                    style={{ color: "var(--sc-text-muted)" }}
-                  >
-                    <i
-                      className="bi bi-person-x"
-                      style={{ fontSize: "2rem", opacity: 0.4 }}
-                    ></i>
-                    <p className="mt-2 mb-0">אין חשבונות ילדים מקושרים</p>
-                    <small>צור חשבון ילד בהגדרות הפרופיל</small>
-                  </div>
-                ) : (
-                  <div className="d-flex flex-column gap-2">
-                    {childrenList.map((child) => (
-                      <div
-                        key={child.id}
-                        className="d-flex justify-content-between align-items-center"
-                        style={{
-                          padding: "12px 16px",
-                          borderRadius: "var(--sc-radius)",
-                          background: child.is_member
-                            ? "rgba(16, 185, 129, 0.06)"
-                            : "var(--sc-bg)",
-                          border: child.is_member
-                            ? "1px solid rgba(16, 185, 129, 0.2)"
-                            : "1px solid var(--sc-border)",
-                        }}
-                      >
-                        <div className="d-flex align-items-center gap-2">
-                          <div
-                            style={{
-                              width: "34px",
-                              height: "34px",
-                              borderRadius: "50%",
-                              background:
-                                "linear-gradient(135deg, rgba(79,70,229,0.1), rgba(6,182,212,0.08))",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <i
-                              className="bi bi-person"
-                              style={{
-                                color: "var(--sc-primary)",
-                                fontSize: "0.9rem",
-                              }}
-                            ></i>
-                          </div>
-                          <div>
-                            <div
-                              className="fw-bold"
-                              style={{ fontSize: "0.9rem" }}
-                            >
-                              {child.first_name}
-                            </div>
-                            {child.username && (
-                              <small style={{ color: "var(--sc-text-muted)" }}>
-                                @{child.username}
-                              </small>
-                            )}
-                          </div>
-                        </div>
-                        <div
-                          onClick={() =>
-                            handleToggleChild(child.id, child.is_member)
-                          }
-                          style={{
-                            width: "44px",
-                            height: "24px",
-                            borderRadius: "12px",
-                            cursor: "pointer",
-                            background: child.is_member
-                              ? "var(--sc-success)"
-                              : "var(--sc-border)",
-                            position: "relative",
-                            transition: "background 0.2s ease",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "20px",
-                              height: "20px",
-                              borderRadius: "50%",
-                              background: "#fff",
-                              position: "absolute",
-                              top: "2px",
-                              right: child.is_member ? "2px" : "22px",
-                              transition: "right 0.2s ease",
-                              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="sc-modal-footer">
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={() => setShowChildrenModal(false)}
-                >
-                  סגור
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <CompareModal
+          show={showCompare}
+          onClose={() => setShowCompare(false)}
+          data={compareData}
+          loading={compareLoading}
+        />
+        <ChildrenModal
+          show={showChildrenModal}
+          onClose={() => setShowChildrenModal(false)}
+          childrenList={childrenList}
+          loading={childrenLoading}
+          onToggleChild={handleToggleChild}
+        />
       </div>
     </div>
   );

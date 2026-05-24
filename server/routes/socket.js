@@ -39,7 +39,9 @@ async function sendPushNotifications(userIds, title, body, data = {}) {
     );
     const tokens = result.rows
       .map((r) => r.token)
-      .filter((t) => typeof t === "string" && t.startsWith("ExponentPushToken"));
+      .filter(
+        (t) => typeof t === "string" && t.startsWith("ExponentPushToken"),
+      );
 
     if (tokens.length === 0) return;
 
@@ -90,17 +92,16 @@ async function sendPushNotifications(userIds, title, body, data = {}) {
       logger.info("Pruned dead push tokens", { count: deadTokens.length });
     }
   } catch (err) {
-    logger.error("Error sending push notifications", { error: err.message, stack: err.stack });
+    logger.error("Error sending push notifications", {
+      error: err.message,
+      stack: err.stack,
+    });
   }
 }
 
-// Per-socket token bucket. Refilled at SOCKET_RATE_PER_SEC tokens/second up to
-// SOCKET_RATE_BURST; each mutation event costs one token. Authenticated users
-// could otherwise spam send_item / toggle_item until the DB falls over —
-// apiLimiter only covers REST.
-const SOCKET_RATE_PER_SEC = 20;
-const SOCKET_RATE_BURST = 50;
-const socketRateState = new Map();
+// Socket rate limiting is implemented via a Postgres-backed token bucket
+// in `server/utils/tokenBucket.js` so limits are shared across pods.
+import { rateLimitOk } from "../utils/tokenBucket.js";
 
 const MUTATION_EVENTS = new Set([
   "send_item",
@@ -117,41 +118,7 @@ const MUTATION_EVENTS = new Set([
   "reorder_items",
 ]);
 
-// Keyed by user id, not socket id, so a hostile client can't refresh the
-// bucket by reconnecting (which used to wipe state on disconnect and hand
-// them a new SOCKET_RATE_BURST). Trade-off: legit flaky-network reconnects
-// inherit their (possibly-depleted) bucket — that's worth it.
-// Per-pod state: under horizontal scaling, the same user landing on two
-// pods gets two independent buckets, effectively doubling their ceiling.
-// Honest acknowledgement of the limit; fixing requires Redis or similar.
-function rateLimitOk(userId) {
-  const now = Date.now();
-  let state = socketRateState.get(userId);
-  if (!state) {
-    state = { tokens: SOCKET_RATE_BURST, lastRefill: now };
-    socketRateState.set(userId, state);
-  }
-  const elapsed = (now - state.lastRefill) / 1000;
-  state.tokens = Math.min(
-    SOCKET_RATE_BURST,
-    state.tokens + elapsed * SOCKET_RATE_PER_SEC,
-  );
-  state.lastRefill = now;
-  if (state.tokens < 1) return false;
-  state.tokens -= 1;
-  return true;
-}
-
-// Prune buckets that haven't been touched in a while so the map doesn't grow
-// forever as users come and go. A bucket sitting idle is always at full
-// SOCKET_RATE_BURST anyway, so dropping it is equivalent to keeping it.
-const rateBucketSweep = setInterval(() => {
-  const cutoff = Date.now() - 30 * 60 * 1000;
-  for (const [k, v] of socketRateState) {
-    if (v.lastRefill < cutoff) socketRateState.delete(k);
-  }
-}, 5 * 60 * 1000);
-rateBucketSweep.unref?.();
+// The previous in-memory Map was removed in favor of Postgres-backed buckets.
 
 export default function registerSocketHandlers(io) {
   // Inline JWT verify. The previous fake req/res adapter that shoehorned the
@@ -186,11 +153,18 @@ export default function registerSocketHandlers(io) {
 
     // Drop mutation events that exceed the per-user rate. Read-only and
     // bookkeeping events (join_list, register_user) pass through untouched.
-    socket.use(([event], next) => {
-      if (MUTATION_EVENTS.has(event) && !rateLimitOk(socket.user.id)) {
-        return next(new Error("rate_limited"));
+    socket.use(async ([event], next) => {
+      try {
+        if (MUTATION_EVENTS.has(event)) {
+          const ok = await rateLimitOk(socket.user.id);
+          if (!ok) return next(new Error("rate_limited"));
+        }
+        next();
+      } catch (err) {
+        // On DB/store errors, allow the request (fail-open) but log.
+        logger.error("Rate limiter error", { error: err.message });
+        next();
       }
-      next();
     });
 
     socket.on("disconnect", () => {
@@ -220,7 +194,10 @@ export default function registerSocketHandlers(io) {
           );
           return;
         }
-        logger.error("join_list error", { error: err.message, stack: err.stack });
+        logger.error("join_list error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -232,6 +209,11 @@ export default function registerSocketHandlers(io) {
       const addby = socket.user.id;
 
       try {
+        // Ensure the socket's user is still a member of the list before
+        // allowing mutations. This prevents a revoked-but-still-connected
+        // user from continuing to mutate until disconnect.
+        await assertMember(listId, addby);
+
         const { newItem, adderName } = await addItem({
           listId,
           userId: addby,
@@ -263,7 +245,10 @@ export default function registerSocketHandlers(io) {
             );
           }
         } catch (pushErr) {
-          logger.error("Push notification error", { error: pushErr.message, stack: pushErr.stack });
+          logger.error("Push notification error", {
+            error: pushErr.message,
+            stack: pushErr.stack,
+          });
         }
       } catch (e) {
         if (e.message === "Not a member") {
@@ -275,7 +260,10 @@ export default function registerSocketHandlers(io) {
         } else if (e.code === "USER_NOT_FOUND") {
           socket.emit("item_error", { message: "User not found" });
         } else {
-          logger.error("Error saving item", { error: e.message, stack: e.stack });
+          logger.error("Error saving item", {
+            error: e.message,
+            stack: e.stack,
+          });
           socket.emit("item_error", { message: "Error adding item" });
         }
       }
@@ -287,7 +275,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, isChecked } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         const res = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -325,7 +313,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         await db.query(
           "DELETE FROM app.list_items WHERE id = $1 AND listId = $2",
           [itemId, listId],
@@ -343,7 +331,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         const result = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -367,7 +355,10 @@ export default function registerSocketHandlers(io) {
         });
         logActivity(listId, userId, "item_paid", `Paid for item ${itemId}`);
       } catch (err) {
-        logger.error("Mark paid error", { error: err.message, stack: err.stack });
+        logger.error("Mark paid error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -377,14 +368,17 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         await db.query(
           "UPDATE app.list_items SET paid_by = NULL, paid_at = NULL WHERE id = $1 AND listId = $2",
           [itemId, listId],
         );
         io.to(String(listId)).emit("item_unpaid", { itemId });
       } catch (err) {
-        logger.error("Unmark paid error", { error: err.message, stack: err.stack });
+        logger.error("Unmark paid error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -394,14 +388,17 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, quantity } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         await db.query(
           "UPDATE app.list_items SET quantity = $1 WHERE id = $2 AND listId = $3",
           [quantity, itemId, listId],
         );
         io.to(String(listId)).emit("quantity_updated", { itemId, quantity });
       } catch (err) {
-        logger.error("Update quantity error", { error: err.message, stack: err.stack });
+        logger.error("Update quantity error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -411,7 +408,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, note } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         const result = await db.query(
           `WITH updated AS (
              UPDATE app.list_items
@@ -433,7 +430,10 @@ export default function registerSocketHandlers(io) {
           note_by_name,
         });
       } catch (err) {
-        logger.error("Update note error", { error: err.message, stack: err.stack });
+        logger.error("Update note error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -443,28 +443,32 @@ export default function registerSocketHandlers(io) {
         createListSchema,
         list,
         callback,
+        "create_list",
       );
       if (!validated) return;
       const { list_name } = validated;
       // Always use the authenticated user — never trust client-supplied userId
       const userId = socket.user.id;
 
+      const client = await db.getClient();
       try {
+        await client.query("BEGIN");
         await assertNotChild(userId);
 
-        const listRes = await db.query(
+        const listRes = await client.query(
           "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
           [list_name],
         );
         const newListId = listRes.rows[0].id;
 
-        await db.query(
+        await client.query(
           "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, $3)",
           [newListId, userId, "admin"],
         );
-
+        await client.query("COMMIT");
         callback({ success: true, listId: newListId });
       } catch (e) {
+        await client.query("ROLLBACK");
         if (e.code === "IS_CHILD") {
           return callback({
             success: false,
@@ -476,6 +480,8 @@ export default function registerSocketHandlers(io) {
         }
         logger.error("Create list error", { error: e.message, stack: e.stack });
         callback({ success: false, error: "Database error" });
+      } finally {
+        client.release();
       }
     });
 
@@ -485,7 +491,7 @@ export default function registerSocketHandlers(io) {
       const { itemId, listId, comment } = validated;
       const userId = socket.user.id;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         const result = await db.query(
           `WITH existing AS (
              SELECT id FROM app.list_item_comments
@@ -522,7 +528,10 @@ export default function registerSocketHandlers(io) {
           comment: newComment,
         });
       } catch (err) {
-        logger.error("Add comment error", { error: err.message, stack: err.stack });
+        logger.error("Add comment error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -532,7 +541,7 @@ export default function registerSocketHandlers(io) {
       const userId = socket.user.id;
       const { listId, message } = validated;
       try {
-        if (!socket.rooms.has(String(listId))) throw new Error("Not a member");
+        await assertMember(listId, userId);
         const result = await db.query(
           `WITH inserted AS (
              INSERT INTO app.list_chat (list_id, user_id, message)
@@ -555,7 +564,10 @@ export default function registerSocketHandlers(io) {
           createdAt: row.created_at,
         });
       } catch (err) {
-        logger.error("Chat message error", { error: err.message, stack: err.stack });
+        logger.error("Chat message error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 
@@ -564,8 +576,7 @@ export default function registerSocketHandlers(io) {
       if (!validated) return;
       const { itemId, listId, assignedTo } = validated;
       try {
-        if (!socket.rooms.has(String(listId)))
-          throw new Error("Not a member");
+        await assertMember(listId, socket.user.id);
         // The WHERE also enforces "assignee must be a member of this list"
         // (null = unassign, which is allowed). Without it, the schema check
         // confirms `assignedTo` is a positive int — but doesn't enforce DB
@@ -604,7 +615,10 @@ export default function registerSocketHandlers(io) {
           assignedToName,
         });
       } catch (err) {
-        logger.error("Assign item error", { error: err.message, stack: err.stack });
+        logger.error("Assign item error", {
+          error: err.message,
+          stack: err.stack,
+        });
       }
     });
 

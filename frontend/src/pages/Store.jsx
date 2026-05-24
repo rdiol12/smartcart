@@ -5,6 +5,9 @@ import api from "../api";
 import { useNotify } from "../context/NotifyContext";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import ProductFilter from "../components/ProductFilter";
+import StoreHeader from "../components/StoreHeader";
+import ProductList from "../components/ProductList";
+import AddToListModal from "../components/AddToListModal";
 
 const Store = () => {
   const { user, isLinkedChild } = useContext(AuthContext);
@@ -34,13 +37,13 @@ const Store = () => {
 
   // Load recent searches on mount
   React.useEffect(() => {
-    const saved = localStorage.getItem('smartcart-recent-searches');
+    const saved = localStorage.getItem("smartcart-recent-searches");
     if (saved) {
       try {
         setRecentSearches(JSON.parse(saved));
       } catch (_e) {
         // Corrupted storage value — drop it silently. Not user-actionable.
-        localStorage.removeItem('smartcart-recent-searches');
+        localStorage.removeItem("smartcart-recent-searches");
       }
     }
   }, []);
@@ -48,9 +51,12 @@ const Store = () => {
   // Save search to recent
   const saveRecentSearch = (query) => {
     if (!query.trim()) return;
-    const updated = [query, ...recentSearches.filter(s => s !== query)].slice(0, 5);
+    const updated = [query, ...recentSearches.filter((s) => s !== query)].slice(
+      0,
+      5,
+    );
     setRecentSearches(updated);
-    localStorage.setItem('smartcart-recent-searches', JSON.stringify(updated));
+    localStorage.setItem("smartcart-recent-searches", JSON.stringify(updated));
   };
 
   const fetchProducts = async (reset = false) => {
@@ -130,7 +136,7 @@ const Store = () => {
 
   const clearRecentSearches = () => {
     setRecentSearches([]);
-    localStorage.removeItem('smartcart-recent-searches');
+    localStorage.removeItem("smartcart-recent-searches");
   };
 
   const loadMore = () => {
@@ -207,92 +213,17 @@ const Store = () => {
           </p>
         </div>
 
-        {/* Search bar */}
-        <div className="sc-store-search mb-4" style={{ position: 'relative' }}>
-          <i className="bi bi-search search-icon"></i>
-          <input
-            type="text"
-            placeholder="חפש מוצר..."
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            onFocus={() => !searchQuery && setShowSuggestions(true)}
-            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-            autoFocus
-          />
-          {searchQuery && (
-            <button
-              className="sc-icon-btn clear-btn"
-              onClick={() => handleSearchChange("")}
-            >
-              <i className="bi bi-x-lg"></i>
-            </button>
-          )}
-          {loading && !products.length && (
-            <div style={{ position: 'absolute', left: searchQuery ? '50px' : '18px', top: '50%', transform: 'translateY(-50%)' }}>
-              <div className="spinner-border spinner-border-sm" style={{ color: 'var(--sc-primary)', width: '18px', height: '18px' }}></div>
-            </div>
-          )}
-
-          {/* Recent Searches Dropdown */}
-          {showSuggestions && !searchQuery && recentSearches.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: 'calc(100% + 8px)',
-              left: 0,
-              right: 0,
-              background: 'var(--sc-surface)',
-              border: '1px solid var(--sc-border)',
-              borderRadius: 'var(--sc-radius)',
-              boxShadow: 'var(--sc-shadow-lg)',
-              padding: '8px 0',
-              zIndex: 100,
-              maxWidth: '640px',
-              margin: '0 auto'
-            }}>
-              <div style={{
-                padding: '8px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: '1px solid var(--sc-border)'
-              }}>
-                <small style={{ color: 'var(--sc-text-muted)', fontWeight: 600 }}>חיפושים אחרונים</small>
-                <button
-                  onClick={clearRecentSearches}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--sc-danger)',
-                    fontSize: '0.8rem',
-                    cursor: 'pointer',
-                    padding: '2px 8px'
-                  }}
-                >
-                  נקה
-                </button>
-              </div>
-              {recentSearches.map((query, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => selectRecentSearch(query)}
-                  style={{
-                    padding: '10px 16px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    transition: 'background 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--sc-bg)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  <i className="bi bi-clock-history" style={{ color: 'var(--sc-text-muted)', fontSize: '0.9rem' }}></i>
-                  <span style={{ fontSize: '0.9rem' }}>{query}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <StoreHeader
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          showSuggestions={showSuggestions}
+          recentSearches={recentSearches}
+          selectRecentSearch={selectRecentSearch}
+          clearRecentSearches={clearRecentSearches}
+          loading={loading}
+          onFocus={() => !searchQuery && setShowSuggestions(true)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+        />
 
         {/* Success */}
         {successMsg && (
@@ -359,302 +290,35 @@ const Store = () => {
         )}
 
         {/* Filter bar — shown once the user has searched at least once. */}
-        {searched && (
-          <ProductFilter onFilterChange={handleFilterChange} />
-        )}
+        {searched && <ProductFilter onFilterChange={handleFilterChange} />}
 
-        {/* Results */}
         {products.length > 0 && (
-          <div>
-            <div
-              className="d-flex align-items-center gap-2 mb-3"
-              style={{ color: "var(--sc-text-muted)", fontSize: "0.85rem" }}
-            >
-              <i className="bi bi-list-ul"></i>
-              <span>
-                תוצאות עבור "
-                <strong style={{ color: "var(--sc-text)" }}>
-                  {searchQuery}
-                </strong>
-                "
-              </span>
-            </div>
-
-            <div className="d-flex flex-column gap-3">
-              {products.map((product, index) => (
-                <div
-                  // /api/search aliases `i.id AS item_id`, so the field is
-                  // `item_id`, not `id`. The previous `product.id` was
-                  // undefined on every row — the React key was
-                  // "undefined-7-0" and the navigate landed on /product/undefined.
-                  key={`${product.item_id}-${product.chain_id}-${index}`}
-                  className="sc-product-row"
-                >
-                  <div
-                    className="d-flex align-items-center gap-3 flex-grow-1"
-                    style={{ cursor: "pointer", minWidth: 0 }}
-                    onClick={() =>
-                      navigate(`/product/${product.item_id}`, {
-                        state: { product },
-                      })
-                    }
-                  >
-                    {product.image_url ? (
-                      <img src={product.image_url} alt={product.item_name} className="sc-product-icon" style={{ objectFit: "contain", background: "#fff" }} />
-                    ) : (
-                      <div className="sc-product-icon">
-                        <i className="bi bi-box-seam"></i>
-                      </div>
-                    )}
-                    <div className="sc-product-info">
-                      <p className="sc-product-name">{product.item_name}</p>
-                      {product.chain_name && (
-                        <div className="sc-product-chain">
-                          <i className="bi bi-shop me-1"></i>
-                          {product.chain_name}
-                        </div>
-                      )}
-                    </div>
-                    <div className="sc-product-price">
-                      ₪{product.price}
-                    </div>
-                  </div>
-                  {user && (
-                    <button
-                      className={`sc-product-add-btn ${isLinkedChild ? "child" : ""}`}
-                      onClick={() => handleAddToList(product)}
-                    >
-                      <i
-                        className={`bi ${isLinkedChild ? "bi-send" : "bi-plus-circle"}`}
-                      ></i>
-                      {isLinkedChild ? "בקש" : "הוסף"}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {hasMore && (
-              <div className="text-center mt-4">
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={loadMore}
-                  disabled={loading}
-                  style={{ padding: "10px 28px" }}
-                >
-                  {loading ? (
-                    <span className="spinner-border spinner-border-sm"></span>
-                  ) : (
-                    <>
-                      <i className="bi bi-arrow-down-circle me-2"></i>הצג עוד
-                      תוצאות
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-
-            {!hasMore && products.length > 0 && (
-              <p
-                className="text-center mt-3 mb-0"
-                style={{ color: "var(--sc-text-muted)", fontSize: "0.85rem" }}
-              >
-                סוף התוצאות
-              </p>
-            )}
-          </div>
+          <ProductList
+            products={products}
+            user={user}
+            isLinkedChild={isLinkedChild}
+            handleAddToList={handleAddToList}
+            hasMore={hasMore}
+            loadMore={loadMore}
+            loading={loading}
+            searchQuery={searchQuery}
+          />
         )}
       </div>
 
-      {/* List selection modal */}
-      {selectedProduct && (
-        <div
-          className="sc-modal-overlay"
-          onClick={() => setSelectedProduct(null)}
-          dir="rtl"
-        >
-          <div
-            className="sc-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: "440px" }}
-          >
-            <div className="sc-modal-header">
-              <h5>{isLinkedChild ? "בחר רשימה לבקשה" : "הוסף לרשימה"}</h5>
-              <button
-                className="sc-icon-btn"
-                onClick={() => setSelectedProduct(null)}
-              >
-                <i className="bi bi-x-lg"></i>
-              </button>
-            </div>
-
-            <div
-              style={{
-                padding: "14px 20px",
-                borderBottom: "1px solid var(--sc-border)",
-                background: "rgba(79,70,229,0.03)",
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
-              }}
-            >
-              <div
-                style={{
-                  width: "42px",
-                  height: "42px",
-                  borderRadius: "12px",
-                  flexShrink: 0,
-                  background:
-                    "linear-gradient(135deg, rgba(79,70,229,0.1), rgba(6,182,212,0.08))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {selectedProduct.image_url ? (
-                  <img src={selectedProduct.image_url} alt="" style={{ width: "28px", height: "28px", objectFit: "contain" }} />
-                ) : (
-                  <i className="bi bi-box-seam" style={{ color: "var(--sc-primary)", fontSize: "1.1rem" }}></i>
-                )}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div className="fw-bold" style={{ fontSize: "0.9rem" }}>
-                  {selectedProduct.item_name}
-                </div>
-                <small style={{ color: "var(--sc-text-muted)" }}>
-                  ₪{selectedProduct.price ?? "—"}
-                  {selectedProduct.chain_name
-                    ? ` · ${selectedProduct.chain_name}`
-                    : ""}
-                </small>
-              </div>
-              <div
-                className="d-flex align-items-center gap-2"
-                style={{
-                  background: "var(--sc-bg)",
-                  borderRadius: "10px",
-                  padding: "4px 8px",
-                }}
-              >
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                  style={{ width: "26px", height: "26px" }}
-                >
-                  <i className="bi bi-dash" style={{ fontSize: "0.8rem" }}></i>
-                </button>
-                <span
-                  className="fw-bold"
-                  style={{
-                    fontSize: "0.9rem",
-                    minWidth: "18px",
-                    textAlign: "center",
-                  }}
-                >
-                  {quantity}
-                </span>
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setQuantity(quantity + 1)}
-                  style={{ width: "26px", height: "26px" }}
-                >
-                  <i className="bi bi-plus" style={{ fontSize: "0.8rem" }}></i>
-                </button>
-              </div>
-            </div>
-
-            <div
-              className="sc-modal-body"
-              style={{ maxHeight: "280px", overflowY: "auto" }}
-            >
-              {lists.length === 0 ? (
-                <div
-                  className="text-center py-4"
-                  style={{ color: "var(--sc-text-muted)" }}
-                >
-                  <i
-                    className="bi bi-list-check"
-                    style={{ fontSize: "2rem", opacity: 0.4 }}
-                  ></i>
-                  <p className="mt-2 mb-0">אין רשימות. צור רשימה חדשה תחילה.</p>
-                </div>
-              ) : (
-                <div className="d-flex flex-column gap-2">
-                  {lists.map((list) => (
-                    <div
-                      key={list.id}
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: "var(--sc-radius)",
-                        cursor: "pointer",
-                        background:
-                          selectedListId === list.id
-                            ? "rgba(79,70,229,0.06)"
-                            : "var(--sc-bg)",
-                        border:
-                          selectedListId === list.id
-                            ? "2px solid var(--sc-primary)"
-                            : "2px solid transparent",
-                        transition: "all 0.15s ease",
-                      }}
-                      onClick={() => setSelectedListId(list.id)}
-                    >
-                      <div className="d-flex justify-content-between align-items-center">
-                        <div>
-                          <h6
-                            className="mb-0 fw-bold"
-                            style={{ fontSize: "0.95rem" }}
-                          >
-                            {list.list_name}
-                          </h6>
-                          <small style={{ color: "var(--sc-text-muted)" }}>
-                            {list.item_count} פריטים · {list.member_count} חברים
-                          </small>
-                        </div>
-                        {selectedListId === list.id && (
-                          <i
-                            className="bi bi-check-circle-fill"
-                            style={{
-                              color: "var(--sc-primary)",
-                              fontSize: "1.2rem",
-                            }}
-                          ></i>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="sc-modal-footer">
-              <button
-                className="sc-btn sc-btn-ghost"
-                onClick={() => setSelectedProduct(null)}
-              >
-                ביטול
-              </button>
-              <button
-                className={`sc-btn ${isLinkedChild ? "sc-btn-ghost" : "sc-btn-primary"}`}
-                onClick={confirmAddToList}
-                disabled={!selectedListId || addingToList}
-                style={{ minWidth: "120px" }}
-              >
-                {addingToList ? (
-                  <span className="spinner-border spinner-border-sm"></span>
-                ) : isLinkedChild ? (
-                  <>
-                    <i className="bi bi-send me-1"></i> שלח בקשה
-                  </>
-                ) : (
-                  <>
-                    <i className="bi bi-plus-lg me-1"></i> הוסף
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AddToListModal
+        selectedProduct={selectedProduct}
+        onClose={() => setSelectedProduct(null)}
+        quantity={quantity}
+        setQuantity={setQuantity}
+        lists={lists}
+        selectedListId={selectedListId}
+        setSelectedListId={setSelectedListId}
+        confirmAddToList={confirmAddToList}
+        addingToList={addingToList}
+        isLinkedChild={isLinkedChild}
+        successMsg={successMsg}
+      />
     </div>
   );
 };

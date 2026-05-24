@@ -67,7 +67,10 @@ router.get("/", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching lists", { error: err.message, stack: err.stack });
+    logger.error("Error fetching lists", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching lists" });
   }
 });
@@ -126,7 +129,10 @@ router.get("/:id/items", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching list details", { error: err.message, stack: err.stack });
+    logger.error("Error fetching list details", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching list details" });
   }
 });
@@ -213,7 +219,10 @@ router.delete("/:id", async (req, res) => {
 
     return res.json({ success: true, message: "List deleted successfully" });
   } catch (err) {
-    logger.error("Error deleting list", { error: err.message, stack: err.stack });
+    logger.error("Error deleting list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deleting list" });
   }
 });
@@ -247,9 +256,33 @@ router.post("/:id/leave", async (req, res) => {
       [listId, req.userId],
     );
 
+    // Force any open sockets for the leaving user to leave the list room so
+    // they can't keep mutating via an already-open socket connection.
+    try {
+      const io = req.app?.locals?.io;
+      if (io) {
+        const sockets = await io.in(`user_${req.userId}`).allSockets();
+        for (const sid of sockets) {
+          const s = io.sockets.sockets.get(sid);
+          if (s) s.leave(String(listId));
+        }
+        logger.info(
+          `Forced user ${req.userId} sockets to leave list ${listId}`,
+          { count: sockets.size },
+        );
+      }
+    } catch (sockErr) {
+      logger.error("Error forcing user sockets to leave list", {
+        error: sockErr.message,
+      });
+    }
+
     return res.json({ success: true, message: "Left list successfully" });
   } catch (err) {
-    logger.error("Error leaving list", { error: err.message, stack: err.stack });
+    logger.error("Error leaving list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error leaving list" });
   }
 });
@@ -269,7 +302,10 @@ router.get("/:id/compare", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error comparing prices", { error: err.message, stack: err.stack });
+    logger.error("Error comparing prices", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error comparing prices" });
   }
 });
@@ -311,7 +347,10 @@ router.post("/:id/invite", async (req, res) => {
     const host = process.env.FRONTEND_URL || "http://localhost:5173";
     return res.json({ inviteLink: `${host}/join/${inviteCode}` });
   } catch (err) {
-    logger.warn("Error creating invite", { error: err.message, stack: err.stack });
+    logger.warn("Error creating invite", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating invite" });
   }
 });
@@ -363,10 +402,7 @@ router.post("/join/:inviteCode", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(410).json({ message: "Invite has expired" });
     }
-    if (
-      invite.max_uses != null &&
-      invite.use_count >= invite.max_uses
-    ) {
+    if (invite.max_uses != null && invite.use_count >= invite.max_uses) {
       await client.query("ROLLBACK");
       return res.status(410).json({ message: "Invite has been used up" });
     }
@@ -416,7 +452,8 @@ router.get("/:id/chat", async (req, res) => {
     100,
   );
   const beforeIdRaw = parseInt(req.query.before_id, 10);
-  const beforeId = Number.isInteger(beforeIdRaw) && beforeIdRaw > 0 ? beforeIdRaw : null;
+  const beforeId =
+    Number.isInteger(beforeIdRaw) && beforeIdRaw > 0 ? beforeIdRaw : null;
 
   try {
     await assertMember(listId, req.userId);
@@ -450,7 +487,10 @@ router.get("/:id/chat", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching chat messages", { error: err.message, stack: err.stack });
+    logger.error("Error fetching chat messages", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching chat messages" });
   }
 });
@@ -476,7 +516,10 @@ router.get("/:id/activity", async (req, res) => {
     );
     return res.json({ activities: result.rows });
   } catch (err) {
-    logger.error("Error fetching activity log", { error: err.message, stack: err.stack });
+    logger.error("Error fetching activity log", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching activity log" });
   }
 });
@@ -500,7 +543,10 @@ router.put("/:id/reorder", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error reordering items", { error: err.message, stack: err.stack });
+    logger.error("Error reordering items", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error reordering items" });
   }
 });
@@ -528,7 +574,10 @@ router.get("/:listId/items/:itemId/comments", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching comments", { error: err.message, stack: err.stack });
+    logger.error("Error fetching comments", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching comments" });
   }
 });

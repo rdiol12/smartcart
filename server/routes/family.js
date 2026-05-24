@@ -67,7 +67,10 @@ router.post("/create-child", async (req, res) => {
 
     return res.status(201).json({ child: result.rows[0] });
   } catch (err) {
-    logger.error("Error creating child account", { error: err.message, stack: err.stack });
+    logger.error("Error creating child account", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating child account" });
   }
 });
@@ -103,7 +106,6 @@ if (process.env.NODE_ENV === "development") {
  * Get parent's children
  */
 router.get("/children", async (req, res) => {
-
   try {
     const { rows } = await db.query(
       `SELECT id, first_name, username, created_at
@@ -114,7 +116,10 @@ router.get("/children", async (req, res) => {
     );
     return res.json({ children: rows });
   } catch (err) {
-    logger.error("Error fetching children", { error: err.message, stack: err.stack });
+    logger.error("Error fetching children", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching children" });
   }
 });
@@ -144,7 +149,10 @@ router.delete("/delete-child/:childId", async (req, res) => {
 
     return res.json({ message: "Child account deleted" });
   } catch (err) {
-    logger.error("Error deleting child account", { error: err.message, stack: err.stack });
+    logger.error("Error deleting child account", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deleting child account" });
   }
 });
@@ -167,7 +175,10 @@ router.get("/lists/:id/children", async (req, res) => {
     );
     return res.json({ children: rows });
   } catch (err) {
-    logger.error("Error fetching children for list", { error: err.message, stack: err.stack });
+    logger.error("Error fetching children for list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching children" });
   }
 });
@@ -214,7 +225,10 @@ router.post("/lists/:id/children/:childId", async (req, res) => {
 
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error adding child to list", { error: err.message, stack: err.stack });
+    logger.error("Error adding child to list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error adding child" });
   }
 });
@@ -256,9 +270,32 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
       [listId, childId],
     );
 
+    // Force any open sockets for the child to leave the list room so a
+    // revoked child cannot continue mutating via an open socket.
+    try {
+      const io = req.app?.locals?.io;
+      if (io) {
+        const sockets = await io.in(`user_${childId}`).allSockets();
+        for (const sid of sockets) {
+          const s = io.sockets.sockets.get(sid);
+          if (s) s.leave(String(listId));
+        }
+        logger.info(`Forced child ${childId} sockets to leave list ${listId}`, {
+          count: sockets.size,
+        });
+      }
+    } catch (sockErr) {
+      logger.error("Error forcing child sockets to leave list", {
+        error: sockErr.message,
+      });
+    }
+
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error removing child from list", { error: err.message, stack: err.stack });
+    logger.error("Error removing child from list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error removing child" });
   }
 });
@@ -268,7 +305,6 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
  * Get pending requests for parent
  */
 router.get("/kid-requests/pending", async (req, res) => {
-
   try {
     const result = await db.query(
       `SELECT
@@ -289,7 +325,10 @@ router.get("/kid-requests/pending", async (req, res) => {
     );
     return res.json({ requests: result.rows });
   } catch (err) {
-    logger.error("Error fetching kid requests", { error: err.message, stack: err.stack });
+    logger.error("Error fetching kid requests", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching requests" });
   }
 });
@@ -299,7 +338,6 @@ router.get("/kid-requests/pending", async (req, res) => {
  * Get child's own request history
  */
 router.get("/kid-requests/my", async (req, res) => {
-
   try {
     const result = await db.query(
       `SELECT
@@ -319,7 +357,10 @@ router.get("/kid-requests/my", async (req, res) => {
     );
     return res.json({ requests: result.rows });
   } catch (err) {
-    logger.error("Error fetching my requests", { error: err.message, stack: err.stack });
+    logger.error("Error fetching my requests", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching requests" });
   }
 });
@@ -403,7 +444,10 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
 
     return res.status(201).json({ message: "Request sent" });
   } catch (err) {
-    logger.error("Error creating kid request", { error: err.message, stack: err.stack });
+    logger.error("Error creating kid request", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating request" });
   }
 });
@@ -504,7 +548,10 @@ router.post("/kid-requests/:id/resolve", async (req, res) => {
       message: action === "approve" ? "Request approved" : "Request rejected",
     });
   } catch (err) {
-    logger.error("Error resolving request", { error: err.message, stack: err.stack });
+    logger.error("Error resolving request", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error resolving request" });
   }
 });

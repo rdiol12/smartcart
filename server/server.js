@@ -66,19 +66,22 @@ const io = new Server(server, { cors: corsOptions });
 
 // Register all socket events
 registerSocketHandlers(io);
-
-// Test database connection + ensure runtime schema (lockout / rotation tables /
-// search index). async/await to match the rest of the codebase — callback-style
-// here was the last holdout.
-try {
-  await db.query("SELECT NOW()");
-  logger.info("PostgreSQL connected (israel_shopping_db)");
-  await ensureSchema();
-} catch (err) {
-  logger.error("Database connection or schema bootstrap failed", {
-    error: err.message,
-    stack: err.stack,
-  });
+// In test mode we skip DB bootstrap to allow fast unit tests without a DB.
+if (process.env.NODE_ENV !== "test") {
+  // Test database connection + ensure runtime schema (lockout / rotation tables /
+  // search index). async/await to match the rest of the codebase — callback-style
+  // here was the last holdout.
+  try {
+    await db.query("SELECT NOW()");
+    logger.info("PostgreSQL connected (israel_shopping_db)");
+    await ensureSchema();
+  } catch (err) {
+    logger.error("Database connection or schema bootstrap failed", {
+      error: err.message,
+      stack: err.stack,
+    });
+    process.exit(1);
+  }
 }
 
 // Middleware
@@ -106,32 +109,33 @@ app.use("/api/price-alerts", price_alerts);
 app.use("/api/activity/feed", activity_feed);
 app.use("/api/templates", templatesRoutes);
 
-
 const LOCK_PRICE_SNAPSHOT = 4242424242;
-cron.schedule("0 2 * * *", async () => {
-  const client = await db.connect();
-  try {
-    const { rows } = await client.query(
-      "SELECT pg_try_advisory_lock($1) AS acquired",
-      [LOCK_PRICE_SNAPSHOT],
-    );
-    if (!rows[0].acquired) {
-      logger.info("[Price Snapshot] Lock held by another instance, skipping");
-      return;
-    }
+if (process.env.NODE_ENV !== "test") {
+  cron.schedule("0 2 * * *", async () => {
+    const client = await db.connect();
     try {
-      await snapshotPrices(client);
+      const { rows } = await client.query(
+        "SELECT pg_try_advisory_lock($1) AS acquired",
+        [LOCK_PRICE_SNAPSHOT],
+      );
+      if (!rows[0].acquired) {
+        logger.info("[Price Snapshot] Lock held by another instance, skipping");
+        return;
+      }
+      try {
+        await snapshotPrices(client);
+      } finally {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          LOCK_PRICE_SNAPSHOT,
+        ]);
+      }
+    } catch (err) {
+      logger.error("[Price Snapshot] Error", { error: err.message });
     } finally {
-      await client.query("SELECT pg_advisory_unlock($1)", [
-        LOCK_PRICE_SNAPSHOT,
-      ]);
+      client.release();
     }
-  } catch (err) {
-    logger.error("[Price Snapshot] Error", { error: err.message });
-  } finally {
-    client.release();
-  }
-});
+  });
+}
 
 // Health check endpoint
 app.get("/health", apiLimiter, (req, res) => {
@@ -154,6 +158,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-server.listen(port, () => {
-  logger.info(`SmartCart server running on port ${port}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  server.listen(port, () => {
+    logger.info(`SmartCart server running on port ${port}`);
+  });
+}
+
+export default app;
