@@ -443,25 +443,29 @@ export default function registerSocketHandlers(io) {
         createListSchema,
         list,
         callback,
+        "create_list",
       );
       if (!validated) return;
       const { list_name } = validated;
       // Always use the authenticated user — never trust client-supplied userId
       const userId = socket.user.id;
-
+      
+      const client = await db.getClient();
       try {
+        await client.query("BEGIN");
         await assertNotChild(userId);
 
-        const listRes = await db.query(
+        const listRes = await client.query(
           "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
           [list_name],
         );
         const newListId = listRes.rows[0].id;
 
-        await db.query(
+        await client.query(
           "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, $3)",
           [newListId, userId, "admin"],
         );
+        await client.query("COMMIT");
 
         callback({ success: true, listId: newListId });
       } catch (e) {
@@ -475,7 +479,10 @@ export default function registerSocketHandlers(io) {
           return callback({ success: false, error: "User not found" });
         }
         logger.error("Create list error", { error: e.message, stack: e.stack });
+        await client.query("ROLLBACK");
         callback({ success: false, error: "Database error" });
+      }finally {
+         client.release();
       }
     });
 
