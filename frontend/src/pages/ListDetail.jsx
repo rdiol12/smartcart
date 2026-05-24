@@ -10,8 +10,6 @@ import BarcodeScanner from "../components/BarcodeScanner";
 import CompareModal from "../components/CompareModal";
 import ChildrenModal from "../components/ChildrenModal";
 import ProductSearchForList from "../components/ProductSearchForList";
-import CompareModal from "../components/CompareModal";
-import ChildrenModal from "../components/ChildrenModal";
 import AddItemForm from "../components/AddItemForm";
 import ListHeader from "../components/ListHeader";
 import ItemsList from "../components/ItemsList";
