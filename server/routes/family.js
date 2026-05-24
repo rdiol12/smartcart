@@ -129,7 +129,10 @@ router.get("/children", async (req, res) => {
  * Delete child account
  */
 router.delete("/delete-child/:childId", async (req, res) => {
-  const childId = req.params.childId;
+  const childId = parseInt(req.params.childId, 10);
+  if (!Number.isInteger(childId) || childId <= 0) {
+    return res.status(400).json({ message: "Invalid child ID" });
+  }
 
   try {
     // Verify the child belongs to this parent
@@ -162,7 +165,10 @@ router.delete("/delete-child/:childId", async (req, res) => {
  * Get parent's children with membership status for a list
  */
 router.get("/lists/:id/children", async (req, res) => {
-  const listId = req.params.id;
+  const listId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(listId) || listId <= 0) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
 
   try {
     const { rows } = await db.query(
@@ -188,8 +194,16 @@ router.get("/lists/:id/children", async (req, res) => {
  * Add child to list
  */
 router.post("/lists/:id/children/:childId", async (req, res) => {
-  const { id: listId, childId } = req.params;
-
+  const listId = parseInt(req.params.id, 10);
+  const childId = parseInt(req.params.childId, 10);
+  if (
+    !Number.isInteger(listId) ||
+    listId <= 0 ||
+    !Number.isInteger(childId) ||
+    childId <= 0
+  ) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
   try {
     // Parent must themselves be an admin of the list to grant access to it.
     // Without this the endpoint accepted any list id and would happily insert
@@ -238,7 +252,16 @@ router.post("/lists/:id/children/:childId", async (req, res) => {
  * Remove child from list
  */
 router.delete("/lists/:id/children/:childId", async (req, res) => {
-  const { id: listId, childId } = req.params;
+  const listId = parseInt(req.params.id, 10);
+  const childId = parseInt(req.params.childId, 10);
+  if (
+    !Number.isInteger(listId) ||
+    listId <= 0 ||
+    !Number.isInteger(childId) ||
+    childId <= 0
+  ) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
 
   try {
     // Same admin gate as the POST counterpart — only the list admin can
@@ -428,17 +451,12 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
     if (io) {
       io.to(`user_${parentId}`).emit("new_kid_request", {
         id: requestId,
-        requestId: requestId,
         childName: childName,
-        child_first_name: childName,
         itemName: itemName,
-        item_name: itemName,
         listName: listName,
-        list_name: listName,
         quantity: quantity || 1,
         price: price,
         productId: productId,
-        product_id: productId,
       });
     }
 
@@ -457,7 +475,10 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
  * Approve or reject child request
  */
 router.post("/kid-requests/:id/resolve", async (req, res) => {
-  const requestId = req.params.id;
+  const requestId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    return res.status(400).json({ message: "Invalid request ID" });
+  }
   const { action } = req.body;
   const io = req.app.locals.io;
 

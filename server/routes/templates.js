@@ -28,7 +28,10 @@ router.get("/", async (req, res) => {
     );
     return res.json({ templates: result.rows });
   } catch (err) {
-    logger.error("Error fetching templates", { error: err.message, stack: err.stack });
+    logger.error("Error fetching templates", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching templates" });
   }
 });
@@ -80,7 +83,10 @@ router.post("/", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error saving template", { error: err.message, stack: err.stack });
+    logger.error("Error saving template", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error saving template" });
   }
 });
@@ -94,7 +100,7 @@ router.post("/", async (req, res) => {
 router.post("/:id/apply", async (req, res) => {
   const templateId = parseInt(req.params.id, 10);
   const { listName } = req.body;
-  if (!Number.isFinite(templateId)) {
+  if (!Number.isInteger(templateId)) {
     return res.status(400).json({ message: "Invalid template id" });
   }
   if (!listName || !listName.trim()) {
@@ -106,6 +112,7 @@ router.post("/:id/apply", async (req, res) => {
   // orphan empty list owned by them. Wrap the whole apply in a transaction.
   const client = await db.connect();
   try {
+    await client.query("BEGIN");
     const t = await client.query(
       "SELECT id FROM app.list_templates WHERE id = $1 AND user_id = $2",
       [templateId, req.userId],
@@ -113,8 +120,6 @@ router.post("/:id/apply", async (req, res) => {
     if (t.rows.length === 0) {
       return res.status(404).json({ message: "Template not found" });
     }
-
-    await client.query("BEGIN");
     const listRes = await client.query(
       "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
       [listName.trim()],
@@ -138,7 +143,10 @@ router.post("/:id/apply", async (req, res) => {
     return res.json({ listId: newListId });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
-    logger.error("Error applying template", { error: err.message, stack: err.stack });
+    logger.error("Error applying template", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error applying template" });
   } finally {
     client.release();
@@ -151,7 +159,7 @@ router.post("/:id/apply", async (req, res) => {
  */
 router.delete("/:id", async (req, res) => {
   const templateId = parseInt(req.params.id, 10);
-  if (!Number.isFinite(templateId)) {
+  if (!Number.isInteger(templateId)) {
     return res.status(400).json({ message: "Invalid template id" });
   }
 
@@ -165,7 +173,10 @@ router.delete("/:id", async (req, res) => {
     }
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error deleting template", { error: err.message, stack: err.stack });
+    logger.error("Error deleting template", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deleting template" });
   }
 });

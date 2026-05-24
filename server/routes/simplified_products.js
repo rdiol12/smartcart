@@ -21,31 +21,37 @@ const router = Router();
 /**
  * GET /api/search — public catalog search.
  */
-router.get("/search", searchLimiter, searchProductValidator, async (req, res) => {
-  const search = req.query.q;
-  if (!search) return res.json({ rows: [], hasMore: false, nextOffset: 0 });
+router.get(
+  "/search",
+  searchLimiter,
+  searchProductValidator,
+  async (req, res) => {
+    const search = req.query.q;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    if (!search) return res.json({ rows: [], hasMore: false, nextOffset: 0 });
 
-  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-  const containsTerm = `%${search}%`;
-  const startsWithTerm = `${search}%`;
-  const category = req.query.category || null;
-  const minPrice = req.query.minPrice != null ? Number(req.query.minPrice) : null;
-  const maxPrice = req.query.maxPrice != null ? Number(req.query.maxPrice) : null;
-  const sort = req.query.sort || null;
+    const containsTerm = `%${search}%`;
+    const startsWithTerm = `${search}%`;
+    const category = req.query.category || null;
+    const minPrice =
+      req.query.minPrice != null ? Number(req.query.minPrice) : null;
+    const maxPrice =
+      req.query.maxPrice != null ? Number(req.query.maxPrice) : null;
+    const sort = req.query.sort || null;
 
-  const outerOrder =
-    sort === "price_asc"
-      ? "sub.price ASC NULLS LAST"
-      : sort === "price_desc"
-        ? "sub.price DESC NULLS LAST"
-        : sort === "name_asc"
-          ? "sub.item_name"
-          : "CASE WHEN sub.item_name ILIKE $2 THEN 0 ELSE 1 END, sub.item_name";
+    const outerOrder =
+      sort === "price_asc"
+        ? "sub.price ASC NULLS LAST"
+        : sort === "price_desc"
+          ? "sub.price DESC NULLS LAST"
+          : sort === "name_asc"
+            ? "sub.item_name"
+            : "CASE WHEN sub.item_name ILIKE $2 THEN 0 ELSE 1 END, sub.item_name";
 
-  try {
-    const reply = await db.query(
-      `SELECT * FROM (
+    try {
+      const reply = await db.query(
+        `SELECT * FROM (
          SELECT DISTINCT ON (i.id)
            i.id as item_id,
            i.name as item_name,
@@ -68,19 +74,28 @@ router.get("/search", searchLimiter, searchProductValidator, async (req, res) =>
          AND ($7::numeric IS NULL OR sub.price <= $7)
        ORDER BY ${outerOrder}
        LIMIT $3 OFFSET $4`,
-      [containsTerm, startsWithTerm, limit + 1, offset, category, minPrice, maxPrice],
-    );
+        [
+          containsTerm,
+          startsWithTerm,
+          limit + 1,
+          offset,
+          category,
+          minPrice,
+          maxPrice,
+        ],
+      );
 
-    const hasMore = reply.rows.length > limit;
-    const rows = hasMore ? reply.rows.slice(0, limit) : reply.rows;
-    const nextOffset = offset + rows.length;
+      const hasMore = reply.rows.length > limit;
+      const rows = hasMore ? reply.rows.slice(0, limit) : reply.rows;
+      const nextOffset = offset + rows.length;
 
-    res.json({ rows, hasMore, nextOffset });
-  } catch (e) {
-    logger.error("Search error", { error: e.message });
-    return res.status(500).json({ rows: [], hasMore: false, nextOffset: 0 });
-  }
-});
+      res.json({ rows, hasMore, nextOffset });
+    } catch (e) {
+      logger.error("Search error", { error: e.message });
+      return res.status(500).json({ rows: [], hasMore: false, nextOffset: 0 });
+    }
+  },
+);
 
 router.get("/categories", searchLimiter, async (_req, res) => {
   try {
@@ -112,47 +127,51 @@ router.get("/chains-list", searchLimiter, async (_req, res) => {
  * GET /api/items/barcode/:barcode
  * Lookup product by barcode
  */
-router.get("/items/barcode/:barcode", searchLimiter, barcodeValidator, async (req, res) => {
-  const { barcode } = req.params;
+router.get(
+  "/items/barcode/:barcode",
+  searchLimiter,
+  barcodeValidator,
+  async (req, res) => {
+    const { barcode } = req.params;
 
-  if (!barcode) {
-    return res.json({ item: null });
-  }
-
-  try {
-    const itemResult = await db.query(
-      `SELECT id, name, barcode, item_code, image_url FROM app.items WHERE barcode = $1 LIMIT 1`,
-      [barcode],
-    );
-
-    if (itemResult.rows.length === 0) {
+    if (!barcode) {
       return res.json({ item: null });
     }
 
-    const item = itemResult.rows[0];
-    const pricesResult = await db.query(
-      `SELECT p.price, c.name as chain_name, b.branch_name
+    try {
+      const itemResult = await db.query(
+        `SELECT id, name, barcode, item_code, image_url FROM app.items WHERE barcode = $1 LIMIT 1`,
+        [barcode],
+      );
+
+      if (itemResult.rows.length === 0) {
+        return res.json({ item: null });
+      }
+
+      const item = itemResult.rows[0];
+      const pricesResult = await db.query(
+        `SELECT p.price, c.name as chain_name, b.branch_name
        FROM app.prices p
        JOIN app.branches b ON b.id = p.branch_id
        JOIN app.chains c ON c.id = b.chain_id
        WHERE p.item_id = $1
        ORDER BY p.price ASC`,
-      [item.id],
-    );
+        [item.id],
+      );
 
-    return res.json({ item, prices: pricesResult.rows });
-  } catch (e) {
-    logger.error("Barcode lookup error", { error: e.message });
-    return res.status(500).json({ item: null });
-  }
-});
+      return res.json({ item, prices: pricesResult.rows });
+    } catch (e) {
+      logger.error("Barcode lookup error", { error: e.message });
+      return res.status(500).json({ item: null });
+    }
+  },
+);
 
 /**
  * GET /api/suggestions
  * Get frequently bought items for user
  */
 router.get("/suggestions", authenticateToken, async (req, res) => {
-
   try {
     // Use the most recent price/quantity per item, not MAX. MAX gave the most
     // expensive historical price and the largest historical quantity — i.e.
@@ -186,7 +205,7 @@ router.get("/suggestions", authenticateToken, async (req, res) => {
  */
 router.get("/products/:id", async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (!Number.isFinite(id)) {
+  if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ message: "Invalid product id" });
   }
 
@@ -237,7 +256,10 @@ router.get(
   "/products/:id/price-history",
   authenticateToken,
   async (req, res) => {
-    const itemId = req.params.id;
+    const itemId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
 
     try {
       const result = await db.query(
@@ -251,7 +273,10 @@ router.get(
       );
       return res.json({ priceHistory: result.rows });
     } catch (err) {
-      logger.error("Error fetching price history", { error: err.message, stack: err.stack });
+      logger.error("Error fetching price history", {
+        error: err.message,
+        stack: err.stack,
+      });
       return res.status(500).json({ message: "Error fetching price history" });
     }
   },
@@ -298,7 +323,10 @@ router.get(
         timesOrdered: quantities.length,
       });
     } catch (err) {
-      logger.error("Error predicting quantity", { error: err.message, stack: err.stack });
+      logger.error("Error predicting quantity", {
+        error: err.message,
+        stack: err.stack,
+      });
       return res.status(500).json({ message: "Error predicting quantity" });
     }
   },
