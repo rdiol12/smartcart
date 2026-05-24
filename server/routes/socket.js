@@ -450,7 +450,7 @@ export default function registerSocketHandlers(io) {
       // Always use the authenticated user — never trust client-supplied userId
       const userId = socket.user.id;
 
-      const client = await db.getClient();
+      const client = await db.connect()();
       try {
         await client.query("BEGIN");
         await assertNotChild(userId);
