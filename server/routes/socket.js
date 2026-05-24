@@ -451,6 +451,7 @@ export default function registerSocketHandlers(io) {
       const userId = socket.user.id;
 
       const client = await db.connect();
+      const client = await db.connect();
       try {
         await client.query("BEGIN");
         await assertNotChild(userId);

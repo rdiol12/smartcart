@@ -7,7 +7,6 @@ import http from "http";
 import { Server } from "socket.io";
 import cron from "node-cron";
 import registerSocketHandlers from "./routes/socket.js";
-import { authenticateToken } from "./middleware/auth.js";
 import db from "./utils/db.js";
 import snapshotPrices from "./utils/snapshot_prices.js";
 import { ensureSchema } from "./utils/bootstrap.js";
@@ -107,6 +106,7 @@ app.use("/api/price-alerts", price_alerts);
 app.use("/api/activity/feed", activity_feed);
 app.use("/api/templates", templatesRoutes);
 
+// Arbitrary advisory lock key — must be unique across all cron jobs in this app
 const LOCK_PRICE_SNAPSHOT = 4242424242;
 if (process.env.NODE_ENV !== "test") {
   cron.schedule("0 2 * * *", async () => {
@@ -155,6 +155,36 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
+
+const shutdown = async () => {
+  logger.info("Shutting down gracefully...");
+
+  const forceExit = setTimeout(() => {
+    logger.error("Could not close connections in time, forcing exit");
+    process.exit(1);
+  }, 10000);
+  forceExit.unref();
+
+  try {
+    await new Promise((resolve) => io.close(resolve));
+    logger.info("Socket.io closed.");
+
+    await new Promise((resolve) => server.close(resolve));
+    logger.info("HTTP server closed.");
+
+    await db.end();
+    logger.info("Database pool closed.");
+
+    clearTimeout(forceExit);
+    process.exit(0);
+  } catch (err) {
+    logger.error("Error during graceful shutdown", { error: err.message });
+    process.exit(1);
+  }
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 if (process.env.NODE_ENV !== "test") {
   server.listen(port, () => {

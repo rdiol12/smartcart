@@ -14,42 +14,29 @@ export async function rateLimitOk(userId) {
   try {
     await client.query("BEGIN");
     const res = await client.query(
-      "SELECT tokens, last_refill FROM app.socket_rate_buckets WHERE user_id = $1 FOR UPDATE",
-      [userId],
+      `INSERT INTO app.socket_rate_buckets (user_id, tokens, last_refill)
+       VALUES ($1, $2, to_timestamp($3 / 1000.0))
+       ON CONFLICT (user_id) DO UPDATE SET
+         tokens = LEAST(
+           $2,
+           app.socket_rate_buckets.tokens + (
+             EXTRACT(EPOCH FROM (now() - app.socket_rate_buckets.last_refill)) * $4
+           )
+         ),
+         last_refill = now()
+       RETURNING tokens`,
+      [userId, SOCKET_RATE_BURST, nowMs, SOCKET_RATE_PER_SEC],
     );
 
-    if (res.rows.length === 0) {
-      // New bucket: give full burst minus one token for this request
-      await client.query(
-        "INSERT INTO app.socket_rate_buckets (user_id, tokens, last_refill) VALUES ($1, $2, to_timestamp($3 / 1000.0))",
-        [userId, SOCKET_RATE_BURST - 1, nowMs],
-      );
-      await client.query("COMMIT");
-      return true;
-    }
-
-    const row = res.rows[0];
-    const lastRefillMs = new Date(row.last_refill).getTime();
-    let tokens = parseFloat(row.tokens);
-    const elapsed = (nowMs - lastRefillMs) / 1000.0;
-    tokens = Math.min(
-      SOCKET_RATE_BURST,
-      tokens + elapsed * SOCKET_RATE_PER_SEC,
-    );
+    const tokens = parseFloat(res.rows[0].tokens);
     if (tokens < 1) {
-      // Persist updated tokens and last_refill
-      await client.query(
-        "UPDATE app.socket_rate_buckets SET tokens = $1, last_refill = to_timestamp($2 / 1000.0) WHERE user_id = $3",
-        [tokens, nowMs, userId],
-      );
       await client.query("COMMIT");
       return false;
     }
 
-    tokens -= 1;
     await client.query(
-      "UPDATE app.socket_rate_buckets SET tokens = $1, last_refill = to_timestamp($2 / 1000.0) WHERE user_id = $3",
-      [tokens, nowMs, userId],
+      "UPDATE app.socket_rate_buckets SET tokens = tokens - 1 WHERE user_id = $1",
+      [userId],
     );
     await client.query("COMMIT");
     return true;
@@ -58,7 +45,6 @@ export async function rateLimitOk(userId) {
       await client.query("ROLLBACK");
     } catch (_e) {}
     logger.error("Token bucket DB error", { error: err.message });
-    // On DB errors, fail open to avoid blocking legitimate traffic.
     return true;
   } finally {
     client.release();
