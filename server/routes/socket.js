@@ -437,7 +437,7 @@ export default function registerSocketHandlers(io) {
       }
     });
 
-    socket.on("create_list", async (list, callback) => {
+     socket.on("create_list", async (list, callback) => {
       const validated = parseSocketPayload(
         socket,
         createListSchema,
@@ -475,6 +475,11 @@ export default function registerSocketHandlers(io) {
             error: "Child accounts cannot create lists",
           });
         }
+        if (e.code === "USER_NOT_FOUND") {
+          return callback({ success: false, error: "User not found" });
+        }
+        logger.error("Create list error", { error: e.message, stack: e.stack });
+        callback({ success: false, error: "Database error" });
       } finally {
         client.release();
       }
