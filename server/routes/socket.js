@@ -437,19 +437,61 @@ export default function registerSocketHandlers(io) {
       }
     });
 
-    // Unmark item as paid
-    socket.on("unmark_paid", async (data) => {
+     socket.on("create_list", async (list, callback) => {
+      const validated = parseSocketPayload(
+        socket,
+        createListSchema,
+        list,
+        callback,
+        "create_list",
+      );
+      if (!validated) return;
+      const { list_name } = validated;
+      // Always use the authenticated user — never trust client-supplied userId
+      const userId = socket.user.id;
+
+      const client = await db.connect();
       try {
-        const { itemId, listId } = data;
+        await client.query("BEGIN");
+        await assertNotChild(userId);
 
-        if (!itemId || !listId) {
-          socket.emit("error", {
-            message: "Missing itemId or listId",
-            code: "MISSING_PARAMS",
+        const listRes = await client.query(
+          "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
+          [list_name],
+        );
+        const newListId = listRes.rows[0].id;
+
+        await client.query(
+          "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, $3)",
+          [newListId, userId, "admin"],
+        );
+        await client.query("COMMIT");
+        callback({ success: true, listId: newListId });
+      } catch (e) {
+        await client.query("ROLLBACK");
+        if (e.code === "IS_CHILD") {
+          return callback({
+            success: false,
+            error: "Child accounts cannot create lists",
           });
-          return;
         }
+        if (e.code === "USER_NOT_FOUND") {
+          return callback({ success: false, error: "User not found" });
+        }
+        logger.error("Create list error", { error: e.message, stack: e.stack });
+        callback({ success: false, error: "Database error" });
+      } finally {
+        client.release();
+      }
+    });
 
+    socket.on("add_comment", async (data) => {
+      const validated = parseSocketPayload(socket, addCommentSchema, data);
+      if (!validated) return;
+      const { itemId, listId, comment } = validated;
+      const userId = socket.user.id;
+      try {
+        await assertMember(listId, userId);
         const result = await db.query(
           `UPDATE app.list_items 
            SET paid_by = NULL, paid_at = NULL 
