@@ -43,7 +43,7 @@ export default async function comparePrices(db, listId) {
 
   const cheapest =
     chains.length > 0
-      ? { chain_name: chains[0].chain_name, total: chains[0].total }
+      ? { chainName: chains[0].chainName, total: chains[0].total }
       : null;
   const mostExpensive =
     chains.length > 1 ? chains[chains.length - 1].total : null;

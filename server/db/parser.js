@@ -7,6 +7,19 @@ import { createPool } from "../utils/db.js";
 
 const db = createPool();
 
+async function asyncPool(limit, items, fn) {
+  const results = [];
+  const executing = [];
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    results.push(p);
+    const e = p.finally(() => executing.splice(executing.indexOf(e), 1));
+    executing.push(e);
+    if (executing.length >= limit) await Promise.race(executing);
+  }
+  return Promise.allSettled(results);
+}
+
 const getText = (node) => {
   if (node == null) return "";
   if (typeof node === "string") return node.trim();
@@ -28,7 +41,6 @@ const getText = (node) => {
   return "";
 };
 
-// Helper: get a field from an object trying multiple casings
 const getField = (obj, ...keys) => {
   for (const key of keys) {
     if (obj[key] !== undefined) return getText(obj[key]);
@@ -55,13 +67,13 @@ function createDecodedStream(filePath) {
 
 export async function ParceStoreFile(xmlpath) {
   const stats = {
-  seen: 0,
-  inserted: 0,
-  skippedEmpty: 0,      // tag was genuinely empty
-  skippedStructured: 0, // tag had children we couldn't read — BUG SIGNAL
-  skippedBadPrice: 0,
-  dbErrors: 0,
-};
+    seen: 0,
+    inserted: 0,
+    skippedEmpty: 0,
+    skippedStructured: 0,
+    skippedBadPrice: 0,
+    dbErrors: 0,
+  };
   return new Promise((resolve, reject) => {
     const rawStream = createDecodedStream(xmlpath);
     const xmlStream = new XmlStream(rawStream);
@@ -91,7 +103,6 @@ export async function ParceStoreFile(xmlpath) {
 
     console.log(` Starting store file parsing: ${xmlpath}`);
 
-    // Helper to insert chain once we have both id and name
     const tryInsertChain = async () => {
       if (currentChainId && currentChainName && !chainInserted) {
         chainInserted = true;
@@ -109,7 +120,6 @@ export async function ParceStoreFile(xmlpath) {
       }
     };
 
-    // Listen for ChainID in all casings: ChainID, ChainId, CHAINID
     for (const tag of ["ChainID", "ChainId", "CHAINID"]) {
       xmlStream.on(`endElement: ${tag}`, async (node) => {
         const val = safeGetText(node, tag);
@@ -123,7 +133,6 @@ export async function ParceStoreFile(xmlpath) {
       });
     }
 
-    // Listen for ChainName in all casings
     for (const tag of ["ChainName", "CHAINNAME"]) {
       xmlStream.on(`endElement: ${tag}`, async (node) => {
         const val = safeGetText(node, tag);
@@ -137,7 +146,6 @@ export async function ParceStoreFile(xmlpath) {
       });
     }
 
-    // Listen for SubChainID/SubChainId/SUBCHAINID
     for (const tag of ["SubChainID", "SubChainId", "SUBCHAINID"]) {
       xmlStream.on(`endElement: ${tag}`, (node) => {
         const val = safeGetText(node, tag);
@@ -145,7 +153,6 @@ export async function ParceStoreFile(xmlpath) {
       });
     }
 
-    // Listen for SubChainName/SUBCHAINNAME
     for (const tag of ["SubChainName", "SUBCHAINNAME"]) {
       xmlStream.on(`endElement: ${tag}`, async (node) => {
         rawStream.pause();
@@ -164,7 +171,6 @@ export async function ParceStoreFile(xmlpath) {
       });
     }
 
-    // Listen for Store/STORE elements
     for (const tag of ["Store", "STORE"]) {
       xmlStream.on(`endElement: ${tag}`, async (store) => {
         rawStream.pause();
@@ -177,7 +183,6 @@ export async function ParceStoreFile(xmlpath) {
             getField(store, "SubChainID", "SubChainId", "SUBCHAINID") ||
             currentSubChainId;
 
-          // Some formats put ChainName inside Store (Shufersal)
           const storeChainName = getField(store, "ChainName", "CHAINNAME");
           if (storeChainName && !currentChainName) {
             currentChainName = storeChainName;
@@ -198,7 +203,7 @@ export async function ParceStoreFile(xmlpath) {
             );
           }
         } catch (e) {
-          console.error(`Error inserting branch:`, e.message);
+          console.error(`Error inserting branch:`, e);
         } finally {
           rawStream.resume();
         }
@@ -216,7 +221,6 @@ export async function ParceStoreFile(xmlpath) {
 }
 
 export async function parsePriceFile(xmlPath, branchId) {
-  // Check if branch exists in the database to prevent foreign key errors
   try {
     const branchCheck = await db.query(
       "SELECT 1 FROM app.branches WHERE id = $1",
@@ -230,10 +234,7 @@ export async function parsePriceFile(xmlPath, branchId) {
       return;
     }
   } catch (e) {
-    console.error(
-      `Error checking branch existence for ${branchId}:`,
-      e.message,
-    );
+    console.error(`Error checking branch existence for ${branchId}:`, e);
     return;
   }
 
@@ -246,119 +247,103 @@ export async function parsePriceFile(xmlPath, branchId) {
     dbErrors: 0,
   };
 
-  // Track in-flight Item handlers so the "end" handler can wait for them
-  // before logging stats. SAX fires endElement synchronously even when the
-  // handler is async, so without this the stats log fires before db.query
-  // calls resolve and inserted/skipped counts under-report.
-  const inflight = [];
+  const itemBuffer = [];
 
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const rawStream = createDecodedStream(xmlPath);
     const xmlStream = new XmlStream(rawStream);
     console.log(` Starting price extraction for branch ${branchId}`);
 
-    // Listen for Item/ITEM elements
     for (const tag of ["Item", "ITEM"]) {
       xmlStream.on(`endElement: ${tag}`, (item) => {
-        // Capture the async handler's promise so "end" can await all of them.
-        inflight.push((async () => {
-        rawStream.pause();
-        stats.seen++;
-        try {
-          let itemCode, itemName, price, manufacturer, unitQty;
-          try {
-            itemCode = getField(item, "ItemCode", "ITEMCODE");
-            itemName = getField(item, "ItemName", "ItemNm", "ITEMNAME");
-            const priceVal =
-              item.ItemPrice || item.ITEMPRICE || item.itemPrice;
-            price = parseFloat(
-              typeof priceVal === "string" ? priceVal : getText(priceVal),
-            );
-            manufacturer =
-              getField(
-                item,
-                "ManufacturerName",
-                "ManufactureName",
-                "MANUFACTURERNAME",
-              ) || "לא ידוע";
-            unitQty = getField(item, "UnitQty", "UNITQTY") || "1";
-          } catch (e) {
-            if (e.code === "STRUCTURED_NODE") {
-              stats.skippedStructured++;
-              if (stats.skippedStructured === 1) {
-                console.warn(
-                  `structured field in ${xmlPath} (branch ${branchId}): ${e.message}`,
-                );
-              }
-              return;
-            }
-            throw e;
-          }
-
-          if (!itemCode || !itemName) {
-            stats.skippedEmpty++;
-            return;
-          }
-          if (isNaN(price)) {
-            stats.skippedBadPrice++;
-            return;
-          }
-
-          const sqlQuery = `
-            WITH ins_item AS (
-              INSERT INTO app.items (barcode, item_code, name, manufacturer, unit_qty)
-              VALUES ($1, $1, $2, $3, $4)
-              ON CONFLICT (item_code, manufacturer, is_weighted) DO UPDATE SET
-                name = EXCLUDED.name,
-                unit_qty = EXCLUDED.unit_qty
-              RETURNING id
-            )
-            INSERT INTO app.prices (item_id, branch_id, price, price_update_time)
-            SELECT id, $5, $6, NOW() FROM ins_item
-            ON CONFLICT (item_id, branch_id) DO UPDATE SET
-              price = EXCLUDED.price,
-              price_update_time = NOW();
-          `;
-          await db.query(sqlQuery, [
-            itemCode,
-            itemName,
-            manufacturer,
-            unitQty,
-            branchId,
-            price,
-          ]);
-          stats.inserted++;
-        } catch (err) {
-          stats.dbErrors++;
-          if (stats.dbErrors <= 3) {
-            console.error(` Error in item:`, err.message);
-          }
-        } finally {
-          rawStream.resume();
-        }
-        })());
+        itemBuffer.push(item);
       });
     }
 
-    xmlStream.on("end", async () => {
-      // Wait for all in-flight Item handlers (their db.query awaits) before
-      // logging stats and moving the file.
-      await Promise.allSettled(inflight);
-      console.log(
-        ` Price update for branch ${branchId} done: ${JSON.stringify(stats)}`,
-      );
-      if (stats.seen > 0 && stats.inserted / stats.seen < 0.9) {
-        console.warn(
-          `LOW INSERT RATE for ${xmlPath}: ${stats.inserted}/${stats.seen}`,
-        );
-      }
-      await movetoprocess(xmlPath);
-      resolve();
-    });
-
-    xmlStream.on("error", (err) => {
-      console.error("Critical error in Parser:", err);
-      reject(err);
-    });
+    xmlStream.on("end", resolve);
+    xmlStream.on("error", reject);
   });
+
+  await asyncPool(20, itemBuffer, async (item) => {
+    stats.seen++;
+    try {
+      let itemCode, itemName, price, manufacturer, unitQty;
+      try {
+        itemCode = getField(item, "ItemCode", "ITEMCODE");
+        itemName = getField(item, "ItemName", "ItemNm", "ITEMNAME");
+        const priceVal = item.ItemPrice || item.ITEMPRICE || item.itemPrice;
+        price = parseFloat(
+          typeof priceVal === "string" ? priceVal : getText(priceVal),
+        );
+        manufacturer =
+          getField(
+            item,
+            "ManufacturerName",
+            "ManufactureName",
+            "MANUFACTURERNAME",
+          ) || "לא ידוע";
+        unitQty = getField(item, "UnitQty", "UNITQTY") || "1";
+      } catch (e) {
+        if (e.code === "STRUCTURED_NODE") {
+          stats.skippedStructured++;
+          if (stats.skippedStructured === 1) {
+            console.warn(
+              `structured field in ${xmlPath} (branch ${branchId}): ${e.message}`,
+            );
+          }
+          return;
+        }
+        throw e;
+      }
+
+      if (!itemCode || !itemName) {
+        stats.skippedEmpty++;
+        return;
+      }
+      if (isNaN(price)) {
+        stats.skippedBadPrice++;
+        return;
+      }
+
+      const sqlQuery = `
+        WITH ins_item AS (
+          INSERT INTO app.items (barcode, item_code, name, manufacturer, unit_qty)
+          VALUES ($1, $1, $2, $3, $4)
+          ON CONFLICT (item_code, manufacturer, is_weighted) DO UPDATE SET
+            name = EXCLUDED.name,
+            unit_qty = EXCLUDED.unit_qty
+          RETURNING id
+        )
+        INSERT INTO app.prices (item_id, branch_id, price, price_update_time)
+        SELECT id, $5, $6, NOW() FROM ins_item
+        ON CONFLICT (item_id, branch_id) DO UPDATE SET
+          price = EXCLUDED.price,
+          price_update_time = NOW();
+      `;
+      await db.query(sqlQuery, [
+        itemCode,
+        itemName,
+        manufacturer,
+        unitQty,
+        branchId,
+        price,
+      ]);
+      stats.inserted++;
+    } catch (err) {
+      stats.dbErrors++;
+      if (stats.dbErrors <= 3) {
+        console.error(` Error in item:`, err.message);
+      }
+    }
+  });
+
+  console.log(
+    ` Price update for branch ${branchId} done: ${JSON.stringify(stats)}`,
+  );
+  if (stats.seen > 0 && stats.inserted / stats.seen < 0.9) {
+    console.warn(
+      `LOW INSERT RATE for ${xmlPath}: ${stats.inserted}/${stats.seen}`,
+    );
+  }
+  await movetoprocess(xmlPath);
 }

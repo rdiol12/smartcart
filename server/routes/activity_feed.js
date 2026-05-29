@@ -12,12 +12,19 @@ router.use(authenticateToken);
 // the public surface ever reached this handler.
 router.get("/", async (req, res) => {
   const userId = req.userId;
-  const { action, from, to } = req.query;
-  // Always parse with explicit radix and cap. Default 50, hard ceiling 100;
-  // a caller passing ?limit=999999999 used to be honored, which both OOMs
-  // the response and lets an attacker scrape the activity log cheaply.
+  const { action } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  const from = req.query.from ? new Date(req.query.from) : null;
+  const to = req.query.to ? new Date(req.query.to) : null;
+  if (from && isNaN(from.getTime())) {
+    return res.status(400).json({ message: "Invalid 'from' date" });
+  }
+  if (to && isNaN(to.getTime())) {
+    return res.status(400).json({ message: "Invalid 'to' date" });
+  }
+
   try {
     const result = await db.query(
       `SELECT al.id, al.list_id, al.user_id, al.action, al.details, al.created_at,

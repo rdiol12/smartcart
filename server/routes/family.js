@@ -6,10 +6,20 @@ import { logger } from "../utils/logger.js";
 import db from "../utils/db.js";
 import logActivity from "../utils/logActivity.js";
 import { messages } from "../utils/messages.js";
+import { kickUserFromList, kickUserEntirely } from "../utils/kickUser.js";
 
 const router = Router();
 const saltRounds = 10;
 router.use(authenticateToken);
+
+// Simple cache for children lists (TTL: 30 seconds)
+const childrenCache = new Map();
+const CACHE_TTL = 30 * 1000;
+
+const clearChildrenCache = (parentId) => {
+  childrenCache.delete(`children_${parentId}`);
+  childrenCache.delete(`children_list_${parentId}`);
+};
 
 /**
  * POST /api/family/create-child
@@ -65,9 +75,15 @@ router.post("/create-child", async (req, res) => {
       [firstName, username, hashedPassword, req.userId],
     );
 
+    // Clear cache for this parent
+    clearChildrenCache(req.userId);
+
     return res.status(201).json({ child: result.rows[0] });
   } catch (err) {
-    logger.error("Error creating child account", { error: err.message, stack: err.stack });
+    logger.error("Error creating child account", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating child account" });
   }
 });
@@ -100,9 +116,16 @@ if (process.env.NODE_ENV === "development") {
 
 /**
  * GET /api/family/children
- * Get parent's children
+ * Get parent's children (with caching)
  */
 router.get("/children", async (req, res) => {
+  const cacheKey = `children_${req.userId}`;
+
+  // Check cache
+  const cached = childrenCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return res.json({ children: cached.data });
+  }
 
   try {
     const { rows } = await db.query(
@@ -112,9 +135,19 @@ router.get("/children", async (req, res) => {
        ORDER BY created_at DESC`,
       [req.userId],
     );
+
+    // Cache the result
+    childrenCache.set(cacheKey, {
+      data: rows,
+      timestamp: Date.now(),
+    });
+
     return res.json({ children: rows });
   } catch (err) {
-    logger.error("Error fetching children", { error: err.message, stack: err.stack });
+    logger.error("Error fetching children", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching children" });
   }
 });
@@ -124,10 +157,12 @@ router.get("/children", async (req, res) => {
  * Delete child account
  */
 router.delete("/delete-child/:childId", async (req, res) => {
-  const childId = req.params.childId;
+  const childId = parseInt(req.params.childId, 10);
+  if (!Number.isInteger(childId) || childId <= 0) {
+    return res.status(400).json({ message: "Invalid child ID" });
+  }
 
   try {
-    // Verify the child belongs to this parent
     const child = await db.query(
       "SELECT id FROM app2.users WHERE id = $1 AND parent_id = $2",
       [childId, req.userId],
@@ -139,12 +174,31 @@ router.delete("/delete-child/:childId", async (req, res) => {
         .json({ message: "Unauthorized or child not found" });
     }
 
-    // Delete the child account (cascade will handle related data)
+    // Delete child's requests first (foreign key constraint)
+    await db.query("DELETE FROM app2.kid_requests WHERE child_id = $1", [
+      childId,
+    ]);
+
+    // Delete child from all lists
+    await db.query("DELETE FROM app.list_members WHERE user_id = $1", [
+      childId,
+    ]);
+
+    // Delete child account
     await db.query("DELETE FROM app2.users WHERE id = $1", [childId]);
+
+    // Clear cache
+    clearChildrenCache(req.userId);
+
+    // Kick from WebSocket connections
+    kickUserEntirely(req.app.locals.io, childId);
 
     return res.json({ message: "Child account deleted" });
   } catch (err) {
-    logger.error("Error deleting child account", { error: err.message, stack: err.stack });
+    logger.error("Error deleting child account", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deleting child account" });
   }
 });
@@ -154,7 +208,18 @@ router.delete("/delete-child/:childId", async (req, res) => {
  * Get parent's children with membership status for a list
  */
 router.get("/lists/:id/children", async (req, res) => {
-  const listId = req.params.id;
+  const listId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(listId) || listId <= 0) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
+
+  const cacheKey = `children_list_${req.userId}_${listId}`;
+
+  // Check cache
+  const cached = childrenCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return res.json({ children: cached.data });
+  }
 
   try {
     const { rows } = await db.query(
@@ -162,12 +227,23 @@ router.get("/lists/:id/children", async (req, res) => {
               CASE WHEN lm.id IS NOT NULL THEN true ELSE false END AS is_member
        FROM app2.users u
        LEFT JOIN app.list_members lm ON lm.list_id = $1 AND lm.user_id = u.id
-       WHERE u.parent_id = $2`,
+       WHERE u.parent_id = $2
+       ORDER BY u.first_name ASC`,
       [listId, req.userId],
     );
+
+    // Cache the result
+    childrenCache.set(cacheKey, {
+      data: rows,
+      timestamp: Date.now(),
+    });
+
     return res.json({ children: rows });
   } catch (err) {
-    logger.error("Error fetching children for list", { error: err.message, stack: err.stack });
+    logger.error("Error fetching children for list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching children" });
   }
 });
@@ -177,19 +253,29 @@ router.get("/lists/:id/children", async (req, res) => {
  * Add child to list
  */
 router.post("/lists/:id/children/:childId", async (req, res) => {
-  const { id: listId, childId } = req.params;
+  const listId = parseInt(req.params.id, 10);
+  const childId = parseInt(req.params.childId, 10);
+
+  if (
+    !Number.isInteger(listId) ||
+    listId <= 0 ||
+    !Number.isInteger(childId) ||
+    childId <= 0
+  ) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
 
   try {
-    // Parent must themselves be an admin of the list to grant access to it.
-    // Without this the endpoint accepted any list id and would happily insert
-    // a child as a member of any list in the database.
+    // Parent must themselves be an admin of the list to grant access
     const parentMembership = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
     );
+
     if (parentMembership.rows.length === 0) {
       return res.status(403).json({ message: "Not a member of this list" });
     }
+
     if (parentMembership.rows[0].status !== "admin") {
       return res
         .status(403)
@@ -206,15 +292,36 @@ router.post("/lists/:id/children/:childId", async (req, res) => {
       return res.status(403).json({ message: "Not your child" });
     }
 
-    await db.query(
-      `INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, 'member')
-       ON CONFLICT (list_id, user_id) DO NOTHING`,
+    // Check if already a member
+    const existingMember = await db.query(
+      "SELECT 1 FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, childId],
     );
 
+    if (existingMember.rows.length === 0) {
+      await db.query(
+        `INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, 'member')`,
+        [listId, childId],
+      );
+
+      // Log activity
+      await logActivity(
+        listId,
+        req.userId,
+        "child_added",
+        `Added child to list`,
+      );
+    }
+
+    // Clear cache for this list
+    childrenCache.delete(`children_list_${req.userId}_${listId}`);
+
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error adding child to list", { error: err.message, stack: err.stack });
+    logger.error("Error adding child to list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error adding child" });
   }
 });
@@ -224,18 +331,28 @@ router.post("/lists/:id/children/:childId", async (req, res) => {
  * Remove child from list
  */
 router.delete("/lists/:id/children/:childId", async (req, res) => {
-  const { id: listId, childId } = req.params;
+  const listId = parseInt(req.params.id, 10);
+  const childId = parseInt(req.params.childId, 10);
+
+  if (
+    !Number.isInteger(listId) ||
+    listId <= 0 ||
+    !Number.isInteger(childId) ||
+    childId <= 0
+  ) {
+    return res.status(400).json({ message: "Invalid ID" });
+  }
 
   try {
-    // Same admin gate as the POST counterpart — only the list admin can
-    // revoke a child's membership.
     const parentMembership = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
     );
+
     if (parentMembership.rows.length === 0) {
       return res.status(403).json({ message: "Not a member of this list" });
     }
+
     if (parentMembership.rows[0].status !== "admin") {
       return res
         .status(403)
@@ -256,19 +373,34 @@ router.delete("/lists/:id/children/:childId", async (req, res) => {
       [listId, childId],
     );
 
+    // Log activity
+    await logActivity(
+      listId,
+      req.userId,
+      "child_removed",
+      `Removed child from list`,
+    );
+
+    // Clear cache
+    childrenCache.delete(`children_list_${req.userId}_${listId}`);
+
+    kickUserFromList(req.app.locals.io, childId, listId);
+
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error removing child from list", { error: err.message, stack: err.stack });
+    logger.error("Error removing child from list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error removing child" });
   }
 });
 
 /**
  * GET /api/kid-requests/pending
- * Get pending requests for parent
+ * Get pending requests for parent (with caching)
  */
 router.get("/kid-requests/pending", async (req, res) => {
-
   try {
     const result = await db.query(
       `SELECT
@@ -289,7 +421,10 @@ router.get("/kid-requests/pending", async (req, res) => {
     );
     return res.json({ requests: result.rows });
   } catch (err) {
-    logger.error("Error fetching kid requests", { error: err.message, stack: err.stack });
+    logger.error("Error fetching kid requests", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching requests" });
   }
 });
@@ -299,7 +434,6 @@ router.get("/kid-requests/pending", async (req, res) => {
  * Get child's own request history
  */
 router.get("/kid-requests/my", async (req, res) => {
-
   try {
     const result = await db.query(
       `SELECT
@@ -314,12 +448,16 @@ router.get("/kid-requests/my", async (req, res) => {
        FROM app2.kid_requests kr
        LEFT JOIN app.list l ON l.id = kr.list_id
        WHERE kr.child_id = $1
-       ORDER BY kr.created_at DESC`,
+       ORDER BY kr.created_at DESC
+       LIMIT 50`,
       [req.userId],
     );
     return res.json({ requests: result.rows });
   } catch (err) {
-    logger.error("Error fetching my requests", { error: err.message, stack: err.stack });
+    logger.error("Error fetching my requests", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching requests" });
   }
 });
@@ -346,14 +484,12 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
     const parentId = userRes.rows[0].parent_id;
     const childName = userRes.rows[0].first_name;
 
-    // Verify the child is actually a member of the list they're requesting
-    // for. Without this check, a child could spam requests against arbitrary
-    // listIds and the parent would get push notifications about lists they
-    // don't own.
+    // Verify the child is actually a member of the list they're requesting for
     const childMembership = await db.query(
       "SELECT 1 FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
     );
+
     if (childMembership.rows.length === 0) {
       return res.status(403).json({ message: "Not a member of this list" });
     }
@@ -387,23 +523,21 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
     if (io) {
       io.to(`user_${parentId}`).emit("new_kid_request", {
         id: requestId,
-        requestId: requestId,
         childName: childName,
-        child_first_name: childName,
         itemName: itemName,
-        item_name: itemName,
         listName: listName,
-        list_name: listName,
         quantity: quantity || 1,
         price: price,
         productId: productId,
-        product_id: productId,
       });
     }
 
-    return res.status(201).json({ message: "Request sent" });
+    return res.status(201).json({ message: "Request sent", requestId });
   } catch (err) {
-    logger.error("Error creating kid request", { error: err.message, stack: err.stack });
+    logger.error("Error creating kid request", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating request" });
   }
 });
@@ -413,41 +547,47 @@ router.post("/kid-requests", kidRequestValidator, async (req, res) => {
  * Approve or reject child request
  */
 router.post("/kid-requests/:id/resolve", async (req, res) => {
-  const requestId = req.params.id;
+  const requestId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    return res.status(400).json({ message: "Invalid request ID" });
+  }
+
   const { action } = req.body;
   const io = req.app.locals.io;
 
   if (action !== "approve" && action !== "reject") {
-    return res.status(400).json({ message: "Invalid action" });
+    return res
+      .status(400)
+      .json({ message: "Invalid action. Must be 'approve' or 'reject'" });
   }
 
   try {
+    // Get request details with child info
     const requestResult = await db.query(
-      `SELECT kr.*, u.first_name as child_first_name
+      `SELECT kr.*, u.first_name as child_first_name, l.list_name
        FROM app2.kid_requests kr
        JOIN app2.users u ON u.id = kr.child_id
-       WHERE kr.id = $1 AND kr.parent_id = $2`,
+       JOIN app.list l ON l.id = kr.list_id
+       WHERE kr.id = $1 AND kr.parent_id = $2 AND kr.status = 'pending'`,
       [requestId, req.userId],
     );
 
     if (requestResult.rows.length === 0) {
-      return res.status(403).json({ message: "Not your child's request" });
+      return res
+        .status(403)
+        .json({ message: "Request not found or already resolved" });
     }
 
     const request = requestResult.rows[0];
     const newStatus = action === "approve" ? "approved" : "rejected";
 
-    // For approval, re-check that the parent is still a member of the list
-    // at approval time. Membership could have changed between the child's
-    // request and now. Also enforce that the item insertion mirrors what
-    // socket send_item / REST POST /lists/:id/items do: include sort_order,
-    // emit receive_item, write activity_log. Previously these were silently
-    // missing on every parent-approved addition.
+    // For approval, verify parent is still a member of the list
     if (action === "approve") {
       const parentStillMember = await db.query(
         "SELECT 1 FROM app.list_members WHERE list_id = $1 AND user_id = $2",
         [request.list_id, req.userId],
       );
+
       if (parentStillMember.rows.length === 0) {
         return res
           .status(403)
@@ -455,11 +595,13 @@ router.post("/kid-requests/:id/resolve", async (req, res) => {
       }
     }
 
+    // Update request status
     await db.query("UPDATE app2.kid_requests SET status = $1 WHERE id = $2", [
       newStatus,
       requestId,
     ]);
 
+    // If approved, add the item to the list
     if (action === "approve") {
       const itemResult = await db.query(
         `INSERT INTO app.list_items
@@ -477,34 +619,47 @@ router.post("/kid-requests/:id/resolve", async (req, res) => {
           request.product_id || null,
         ],
       );
+
       const newItem = itemResult.rows[0];
 
+      // Notify list members via WebSocket
       if (io) {
         io.to(String(request.list_id)).emit("receive_item", newItem);
       }
 
+      // Log activity
       await logActivity(
         request.list_id,
         request.child_id,
         "item_added",
-        `Added item: ${request.item_name}`,
+        `Added item from kid request: ${request.item_name}`,
       );
     }
 
-    // Notify the child
+    // Notify the child of the resolution
     if (io) {
       io.to(`user_${request.child_id}`).emit("request_resolved", {
         requestId: requestId,
         status: newStatus,
+        itemName: request.item_name,
+        listName: request.list_name,
       });
     }
 
     return res.json({
       success: true,
-      message: action === "approve" ? "Request approved" : "Request rejected",
+      message:
+        action === "approve"
+          ? "Request approved and item added"
+          : "Request rejected",
     });
   } catch (err) {
-    logger.error("Error resolving request", { error: err.message, stack: err.stack });
+    logger.error("Error resolving request", {
+      error: err.message,
+      stack: err.stack,
+      requestId,
+      action,
+    });
     return res.status(500).json({ message: "Error resolving request" });
   }
 });

@@ -8,15 +8,12 @@ import logActivity from "../utils/logActivity.js";
 import comparePrices from "../utils/priceCompare.js";
 import { addItem, reorderItems } from "../services/listItems.js";
 import { messages } from "../utils/messages.js";
+import { kickUserFromList, kickUserEntirely } from "../utils/kickUser.js";
 
 const router = Router();
 router.use(authenticateToken);
 
-// Validate every numeric path param up front. pg would coerce the string for us
-// and throw on garbage like "1;SELECT 1--", but that surfaces as a 500 with a
-// driver error in the response body when NODE_ENV isn't strict. Catch it here
-// and return a clean 400 instead. Mutates req.params.<name> to a number so
-// downstream handlers don't have to.
+// Validate every numeric path param up front
 function intParam(name) {
   return (req, res, next, value) => {
     const n = Number(value);
@@ -37,10 +34,6 @@ router.param("itemId", intParam("itemId"));
  */
 router.get("/", async (req, res) => {
   try {
-    // item_count + member_count via grouped LEFT JOINs (same shape as the
-    // templates listing query). The frontend renders these straight into the
-    // list cards; without them every card said "undefined פריטים" /
-    // "undefined חברים" on first page load.
     const { rows } = await db.query(
       `SELECT l.id, l.list_name, l.status, l.created_at, l.updated_at,
               lm.status AS role,
@@ -67,7 +60,10 @@ router.get("/", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching lists", { error: err.message, stack: err.stack });
+    logger.error("Error fetching lists", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching lists" });
   }
 });
@@ -88,15 +84,18 @@ router.get("/:id/items", async (req, res) => {
       return res.status(404).json({ message: "List not found" });
     }
 
+    // FIXED: Added JOIN to app.items to get image_url
     const itemsRes = await db.query(
       `SELECT li.id, li.listid, li.itemname, li.price, li.storename, li.quantity,
               li.addby, li.addat, li.updatedat, li.product_id, li.sort_order,
               li.is_checked, li.checked_by, li.paid_by, li.paid_at,
               li.note, li.note_by, li.assigned_to,
+              i.image_url,
               u.first_name AS paid_by_name, u2.first_name AS note_by_name,
               u3.first_name AS added_by_name, u4.first_name AS checked_by_name,
               u5.first_name AS assigned_to_name
        FROM app.list_items li
+       LEFT JOIN app.items i ON i.id = li.product_id
        LEFT JOIN app2.users u ON li.paid_by = u.id
        LEFT JOIN app2.users u2 ON li.note_by = u2.id
        LEFT JOIN app2.users u3 ON li.addby = u3.id
@@ -126,14 +125,17 @@ router.get("/:id/items", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching list details", { error: err.message, stack: err.stack });
+    logger.error("Error fetching list details", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching list details" });
   }
 });
 
 /**
  * POST /api/lists/:id/items
- * Add item to list (parents/regular users only - children must use /api/family/kid-requests)
+ * Add item to list
  */
 router.post("/:id/items", async (req, res) => {
   const listId = req.params.id;
@@ -192,9 +194,6 @@ router.delete("/:id", async (req, res) => {
   const listId = req.params.id;
 
   try {
-    // One query covers both membership and role. Avoids the assertMember +
-    // separate-SELECT race that could crash on memberRes.rows[0] if membership
-    // was revoked in between, and saves a round-trip.
     const memberRes = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
@@ -209,11 +208,24 @@ router.delete("/:id", async (req, res) => {
         .json({ message: "Only admin can delete the list" });
     }
 
+    // Delete all related data first
+    await db.query("DELETE FROM app.list_items WHERE listid = $1", [listId]);
+    await db.query("DELETE FROM app.list_members WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.list_chat WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.activity_log WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.list_invites WHERE list_id = $1", [listId]);
     await db.query("DELETE FROM app.list WHERE id = $1", [listId]);
+
+    const io = req.app.locals.io;
+    io.in(String(listId)).socketsLeave(String(listId));
+    io.to(String(listId)).emit("list_deleted", { listId });
 
     return res.json({ success: true, message: "List deleted successfully" });
   } catch (err) {
-    logger.error("Error deleting list", { error: err.message, stack: err.stack });
+    logger.error("Error deleting list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deleting list" });
   }
 });
@@ -226,7 +238,6 @@ router.post("/:id/leave", async (req, res) => {
   const listId = req.params.id;
 
   try {
-    // One query covers membership + role; mirrors the DELETE /:id pattern.
     const memberRes = await db.query(
       "SELECT status FROM app.list_members WHERE list_id = $1 AND user_id = $2",
       [listId, req.userId],
@@ -247,9 +258,14 @@ router.post("/:id/leave", async (req, res) => {
       [listId, req.userId],
     );
 
+    kickUserFromList(req.app.locals.io, req.userId, listId);
+
     return res.json({ success: true, message: "Left list successfully" });
   } catch (err) {
-    logger.error("Error leaving list", { error: err.message, stack: err.stack });
+    logger.error("Error leaving list", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error leaving list" });
   }
 });
@@ -269,7 +285,10 @@ router.get("/:id/compare", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error comparing prices", { error: err.message, stack: err.stack });
+    logger.error("Error comparing prices", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error comparing prices" });
   }
 });
@@ -304,26 +323,20 @@ router.post("/:id/invite", async (req, res) => {
       [listId, inviteCode, req.userId],
     );
 
-    // The frontend route is `/join/:inviteCode` (App.jsx). The link used to
-    // say `/invite/:inviteCode`, which fell through to the home page via the
-    // SPA fallback — the invite UX shipped with two halves that didn't talk
-    // to each other.
     const host = process.env.FRONTEND_URL || "http://localhost:5173";
     return res.json({ inviteLink: `${host}/join/${inviteCode}` });
   } catch (err) {
-    logger.warn("Error creating invite", { error: err.message, stack: err.stack });
+    logger.warn("Error creating invite", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating invite" });
   }
 });
 
 /**
  * POST /api/lists/join/:inviteCode
- *
- * Redeem an invite code: validate it (exists / active / not expired / not
- * over its use cap), add the caller to the list as a member, and bump the
- * use_count. Previously no consumer endpoint existed for the codes minted
- * above — the entire invite/join flow was dead because the server had no
- * route reading from app.list_invites. JoinList.jsx now hits this URL.
+ * Redeem an invite code
  */
 router.post("/join/:inviteCode", async (req, res) => {
   const { inviteCode } = req.params;
@@ -337,10 +350,6 @@ router.post("/join/:inviteCode", async (req, res) => {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    // FOR UPDATE OF i — lock only the invite row, not the joined list row.
-    // The list row doesn't need protection here; locking it would block
-    // any other operation against the list during this transaction for no
-    // reason. Tiny perf nit on a low-traffic endpoint.
     const inviteRes = await client.query(
       `SELECT i.list_id, i.max_uses, i.use_count, i.is_active, i.expires_at,
               l.list_name
@@ -363,18 +372,11 @@ router.post("/join/:inviteCode", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(410).json({ message: "Invite has expired" });
     }
-    if (
-      invite.max_uses != null &&
-      invite.use_count >= invite.max_uses
-    ) {
+    if (invite.max_uses != null && invite.use_count >= invite.max_uses) {
       await client.query("ROLLBACK");
       return res.status(410).json({ message: "Invite has been used up" });
     }
 
-    // Only bump use_count when the INSERT actually adds a new membership.
-    // Without this, the same user reloading the join page eats `max_uses`
-    // one redemption at a time — a single clumsy admin could exhaust a
-    // max_uses=5 invite with one user pressing refresh five times.
     const inserted = await client.query(
       `INSERT INTO app.list_members (list_id, user_id, status)
        VALUES ($1, $2, 'member')
@@ -416,12 +418,11 @@ router.get("/:id/chat", async (req, res) => {
     100,
   );
   const beforeIdRaw = parseInt(req.query.before_id, 10);
-  const beforeId = Number.isInteger(beforeIdRaw) && beforeIdRaw > 0 ? beforeIdRaw : null;
+  const beforeId =
+    Number.isInteger(beforeIdRaw) && beforeIdRaw > 0 ? beforeIdRaw : null;
 
   try {
     await assertMember(listId, req.userId);
-    // Cursor pagination on lc.id (monotonic). Fetch limit+1 to know if there
-    // are more older messages without an extra COUNT query.
     const params = [listId];
     let cursorClause = "";
     if (beforeId !== null) {
@@ -441,16 +442,17 @@ router.get("/:id/chat", async (req, res) => {
     );
     const hasMore = result.rows.length > limit;
     const page = hasMore ? result.rows.slice(0, limit) : result.rows;
-    // Client renders oldest-first.
     const messages = page.slice().reverse();
-    // Cursor for fetching the next (older) page is the smallest id we returned.
     const nextBeforeId = page.length > 0 ? page[page.length - 1].id : null;
     return res.json({ messages, hasMore, nextBeforeId });
   } catch (err) {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching chat messages", { error: err.message, stack: err.stack });
+    logger.error("Error fetching chat messages", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching chat messages" });
   }
 });
@@ -476,7 +478,10 @@ router.get("/:id/activity", async (req, res) => {
     );
     return res.json({ activities: result.rows });
   } catch (err) {
-    logger.error("Error fetching activity log", { error: err.message, stack: err.stack });
+    logger.error("Error fetching activity log", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching activity log" });
   }
 });
@@ -500,7 +505,10 @@ router.put("/:id/reorder", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error reordering items", { error: err.message, stack: err.stack });
+    logger.error("Error reordering items", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error reordering items" });
   }
 });
@@ -528,7 +536,10 @@ router.get("/:listId/items/:itemId/comments", async (req, res) => {
     if (err.message === "Not a member") {
       return res.status(403).json({ message: "Not a member of this list" });
     }
-    logger.error("Error fetching comments", { error: err.message, stack: err.stack });
+    logger.error("Error fetching comments", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching comments" });
   }
 });

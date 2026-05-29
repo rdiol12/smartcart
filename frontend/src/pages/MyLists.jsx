@@ -172,11 +172,13 @@ const MyLists = () => {
                     <i className="bi bi-clipboard-plus"></i>
                   </div>
                   <h4>
-                    {isLinkedChild ? "אין רשימות עדיין" : "אין רשימות עדיין"}
+                    {isLinkedChild
+                      ? "ההורים עוד לא יצרו רשימות"
+                      : "אין רשימות עדיין"}
                   </h4>
                   <p>
                     {isLinkedChild
-                      ? "ההורים עוד לא יצרו רשימות"
+                      ? "המתן עד שההורים יוסיפו רשימות"
                       : "צור רשימה חדשה כדי להתחיל"}
                   </p>
                   {!isLinkedChild && (

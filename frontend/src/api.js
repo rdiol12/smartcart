@@ -1,7 +1,5 @@
 import axios from "axios";
 
-// `??` so an explicitly-empty VITE_API_URL keeps API_URL as ""
-// (root-relative — same-origin requests via the nginx reverse proxy).
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 const api = axios.create({
