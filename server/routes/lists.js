@@ -13,11 +13,7 @@ import { kickUserFromList, kickUserEntirely } from "../utils/kickUser.js";
 const router = Router();
 router.use(authenticateToken);
 
-// Validate every numeric path param up front. pg would coerce the string for us
-// and throw on garbage like "1;SELECT 1--", but that surfaces as a 500 with a
-// driver error in the response body when NODE_ENV isn't strict. Catch it here
-// and return a clean 400 instead. Mutates req.params.<name> to a number so
-// downstream handlers don't have to.
+// Validate every numeric path param up front
 function intParam(name) {
   return (req, res, next, value) => {
     const n = Number(value);
@@ -38,10 +34,6 @@ router.param("itemId", intParam("itemId"));
  */
 router.get("/", async (req, res) => {
   try {
-    // item_count + member_count via grouped LEFT JOINs (same shape as the
-    // templates listing query). The frontend renders these straight into the
-    // list cards; without them every card said "undefined פריטים" /
-    // "undefined חברים" on first page load.
     const { rows } = await db.query(
       `SELECT l.id, l.list_name, l.status, l.created_at, l.updated_at,
               lm.status AS role,
@@ -92,15 +84,18 @@ router.get("/:id/items", async (req, res) => {
       return res.status(404).json({ message: "List not found" });
     }
 
+    // FIXED: Added JOIN to app.items to get image_url
     const itemsRes = await db.query(
       `SELECT li.id, li.listid, li.itemname, li.price, li.storename, li.quantity,
               li.addby, li.addat, li.updatedat, li.product_id, li.sort_order,
               li.is_checked, li.checked_by, li.paid_by, li.paid_at,
               li.note, li.note_by, li.assigned_to,
+              i.image_url,
               u.first_name AS paid_by_name, u2.first_name AS note_by_name,
               u3.first_name AS added_by_name, u4.first_name AS checked_by_name,
               u5.first_name AS assigned_to_name
        FROM app.list_items li
+       LEFT JOIN app.items i ON i.id = li.product_id
        LEFT JOIN app2.users u ON li.paid_by = u.id
        LEFT JOIN app2.users u2 ON li.note_by = u2.id
        LEFT JOIN app2.users u3 ON li.addby = u3.id
@@ -140,7 +135,7 @@ router.get("/:id/items", async (req, res) => {
 
 /**
  * POST /api/lists/:id/items
- * Add item to list (parents/regular users only - children must use /api/family/kid-requests)
+ * Add item to list
  */
 router.post("/:id/items", async (req, res) => {
   const listId = req.params.id;
@@ -213,6 +208,12 @@ router.delete("/:id", async (req, res) => {
         .json({ message: "Only admin can delete the list" });
     }
 
+    // Delete all related data first
+    await db.query("DELETE FROM app.list_items WHERE listid = $1", [listId]);
+    await db.query("DELETE FROM app.list_members WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.list_chat WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.activity_log WHERE list_id = $1", [listId]);
+    await db.query("DELETE FROM app.list_invites WHERE list_id = $1", [listId]);
     await db.query("DELETE FROM app.list WHERE id = $1", [listId]);
 
     const io = req.app.locals.io;
@@ -233,7 +234,7 @@ router.delete("/:id", async (req, res) => {
  * POST /api/lists/:id/leave
  * Leave a list (members only, not admin)
  */
-jsrouter.post("/:id/leave", async (req, res) => {
+router.post("/:id/leave", async (req, res) => {
   const listId = req.params.id;
 
   try {
@@ -322,10 +323,6 @@ router.post("/:id/invite", async (req, res) => {
       [listId, inviteCode, req.userId],
     );
 
-    // The frontend route is `/join/:inviteCode` (App.jsx). The link used to
-    // say `/invite/:inviteCode`, which fell through to the home page via the
-    // SPA fallback — the invite UX shipped with two halves that didn't talk
-    // to each other.
     const host = process.env.FRONTEND_URL || "http://localhost:5173";
     return res.json({ inviteLink: `${host}/join/${inviteCode}` });
   } catch (err) {
@@ -339,12 +336,7 @@ router.post("/:id/invite", async (req, res) => {
 
 /**
  * POST /api/lists/join/:inviteCode
- *
- * Redeem an invite code: validate it (exists / active / not expired / not
- * over its use cap), add the caller to the list as a member, and bump the
- * use_count. Previously no consumer endpoint existed for the codes minted
- * above — the entire invite/join flow was dead because the server had no
- * route reading from app.list_invites. JoinList.jsx now hits this URL.
+ * Redeem an invite code
  */
 router.post("/join/:inviteCode", async (req, res) => {
   const { inviteCode } = req.params;
@@ -358,10 +350,6 @@ router.post("/join/:inviteCode", async (req, res) => {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    // FOR UPDATE OF i — lock only the invite row, not the joined list row.
-    // The list row doesn't need protection here; locking it would block
-    // any other operation against the list during this transaction for no
-    // reason. Tiny perf nit on a low-traffic endpoint.
     const inviteRes = await client.query(
       `SELECT i.list_id, i.max_uses, i.use_count, i.is_active, i.expires_at,
               l.list_name
@@ -389,10 +377,6 @@ router.post("/join/:inviteCode", async (req, res) => {
       return res.status(410).json({ message: "Invite has been used up" });
     }
 
-    // Only bump use_count when the INSERT actually adds a new membership.
-    // Without this, the same user reloading the join page eats `max_uses`
-    // one redemption at a time — a single clumsy admin could exhaust a
-    // max_uses=5 invite with one user pressing refresh five times.
     const inserted = await client.query(
       `INSERT INTO app.list_members (list_id, user_id, status)
        VALUES ($1, $2, 'member')
@@ -439,8 +423,6 @@ router.get("/:id/chat", async (req, res) => {
 
   try {
     await assertMember(listId, req.userId);
-    // Cursor pagination on lc.id (monotonic). Fetch limit+1 to know if there
-    // are more older messages without an extra COUNT query.
     const params = [listId];
     let cursorClause = "";
     if (beforeId !== null) {
@@ -460,9 +442,7 @@ router.get("/:id/chat", async (req, res) => {
     );
     const hasMore = result.rows.length > limit;
     const page = hasMore ? result.rows.slice(0, limit) : result.rows;
-    // Client renders oldest-first.
     const messages = page.slice().reverse();
-    // Cursor for fetching the next (older) page is the smallest id we returned.
     const nextBeforeId = page.length > 0 ? page[page.length - 1].id : null;
     return res.json({ messages, hasMore, nextBeforeId });
   } catch (err) {
