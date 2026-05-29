@@ -1,6 +1,7 @@
 import React from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { SpeedInsights } from "@vercel/speed-insights/react";
+import { Analytics } from "@vercel/analytics/react";
 import NavBar from "./components/NavBar";
 import PrivateRoute from "./components/PrivateRoute";
 import Home from "./pages/Home";
@@ -55,7 +56,8 @@ function App() {
               <Route path="/templates" element={<PrivateRoute parentOnly><Templates /></PrivateRoute>} />
               <Route path="/family" element={<PrivateRoute parentOnly><FamilySettings /></PrivateRoute>} />
             </Routes>
-            <SpeedInsights /> 
+            <SpeedInsights />
+            <Analytics />
           </BrowserRouter>
         </AuthProvider>
       </NotifyProvider>
