@@ -2,7 +2,8 @@ import React from "react";
 import ListItemRow from "./ListItemRow";
 
 export default function ItemsList({ items, listId }) {
-  if (!items || items.length === 0) {
+  // Add safety check
+  if (!items || !Array.isArray(items) || items.length === 0) {
     return (
       <div className="sc-card">
         <div className="sc-empty" style={{ padding: "2rem" }}>
@@ -17,10 +18,12 @@ export default function ItemsList({ items, listId }) {
   }
 
   return (
-    <div>
-      {items.map((item) => (
-        <ListItemRow key={item.id} item={item} listId={listId} />
-      ))}
+    <div className="d-flex flex-column gap-2">
+      {items
+        .filter((item) => item && typeof item === "object")
+        .map((item) => (
+          <ListItemRow key={item.id} item={item} listId={listId} />
+        ))}
     </div>
   );
 }

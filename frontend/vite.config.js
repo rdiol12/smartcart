@@ -5,8 +5,8 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: "localhost",
-    port: 5173,
+    host: "0.0.0.0",
+    port: 3000,
     // Same-origin proxying for `npm run dev`, mirroring the nginx setup in prod.
     // Server listens on host:8000 (see docker-compose.yml and server/.env).
     proxy: {

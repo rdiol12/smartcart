@@ -1,4 +1,10 @@
-import React, { useState, useRef, useContext } from "react";
+import React, {
+  useState,
+  useRef,
+  useContext,
+  useCallback,
+  useMemo,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import api from "../api";
@@ -8,6 +14,52 @@ import ProductFilter from "../components/ProductFilter";
 import StoreHeader from "../components/StoreHeader";
 import ProductList from "../components/ProductList";
 import AddToListModal from "../components/AddToListModal";
+
+// Request cache to prevent duplicate API calls
+class RequestCache {
+  constructor() {
+    this.pendingRequests = new Map();
+    this.cache = new Map();
+  }
+
+  async request(key, requestFn, ttl = 30000) {
+    // Check for pending request
+    if (this.pendingRequests.has(key)) {
+      return this.pendingRequests.get(key);
+    }
+
+    // Check cache
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.timestamp < ttl) {
+      return cached.data;
+    }
+
+    // Make request
+    const promise = requestFn()
+      .then((data) => {
+        this.cache.set(key, { data, timestamp: Date.now() });
+        return data;
+      })
+      .finally(() => {
+        this.pendingRequests.delete(key);
+      });
+
+    this.pendingRequests.set(key, promise);
+    return promise;
+  }
+
+  clear() {
+    this.pendingRequests.clear();
+    this.cache.clear();
+  }
+
+  // Method to invalidate specific cache entry
+  invalidate(key) {
+    this.cache.delete(key);
+  }
+}
+
+const requestCache = new RequestCache();
 
 const Store = () => {
   const { user, isLinkedChild } = useContext(AuthContext);
@@ -20,7 +72,9 @@ const Store = () => {
   const [searched, setSearched] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
+  const [refreshKey, setRefreshKey] = useState(0); // Add refresh key to force re-renders
   const searchTimeoutRef = useRef(null);
+  const abortControllerRef = useRef(null);
   const limit = 20;
   const offsetRef = useRef(0);
   const searchRef = useRef("");
@@ -42,124 +96,221 @@ const Store = () => {
       try {
         setRecentSearches(JSON.parse(saved));
       } catch (_e) {
-        // Corrupted storage value — drop it silently. Not user-actionable.
         localStorage.removeItem("smartcart-recent-searches");
       }
     }
+
+    // Cleanup on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Save search to recent
-  const saveRecentSearch = (query) => {
+  const saveRecentSearch = useCallback((query) => {
     if (!query.trim()) return;
-    const updated = [query, ...recentSearches.filter((s) => s !== query)].slice(
-      0,
-      5,
-    );
-    setRecentSearches(updated);
-    localStorage.setItem("smartcart-recent-searches", JSON.stringify(updated));
-  };
+    setRecentSearches((prev) => {
+      const updated = [query, ...prev.filter((s) => s !== query)].slice(0, 5);
+      localStorage.setItem(
+        "smartcart-recent-searches",
+        JSON.stringify(updated),
+      );
+      return updated;
+    });
+  }, []);
 
-  const fetchProducts = async (reset = false) => {
-    const q = searchRef.current.trim();
-    if (!q) {
-      if (reset) setProducts([]);
-      setHasMore(false);
-      setLoading(false);
-      return;
-    }
-    const currentOffset = reset ? 0 : offsetRef.current;
-    try {
+  // Fetch products with caching and abort support
+  const fetchProducts = useCallback(
+    async (reset = false) => {
+      const q = searchRef.current.trim();
+      if (!q) {
+        if (reset) setProducts([]);
+        setHasMore(false);
+        setLoading(false);
+        return;
+      }
+
+      // Abort previous request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+
+      const currentOffset = reset ? 0 : offsetRef.current;
+
+      // Create cache key from request params
       const params = new URLSearchParams({ limit, offset: currentOffset, q });
       const f = filtersRef.current;
       if (f.category) params.append("category", f.category);
       if (f.minPrice) params.append("minPrice", f.minPrice);
       if (f.maxPrice) params.append("maxPrice", f.maxPrice);
       if (f.sort) params.append("sort", f.sort);
-      const response = await api.get(`/api/search?${params.toString()}`);
-      const newProducts = Array.isArray(response.data?.rows)
-        ? response.data.rows
-        : [];
-      if (reset) setProducts(newProducts);
-      else setProducts((prev) => [...prev, ...newProducts]);
 
-      offsetRef.current =
-        response.data?.nextOffset || currentOffset + newProducts.length;
-      setHasMore(response.data?.hasMore ?? false);
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה בטעינת תוצאות החיפוש");
-      setHasMore(false);
-    } finally {
-      setLoading(false);
-    }
-  };
+      const cacheKey = `/api/search?${params.toString()}`;
 
-  const handleFilterChange = (newFilters) => {
-    filtersRef.current = newFilters;
+      try {
+        const response = await requestCache.request(
+          cacheKey,
+          async () => {
+            const res = await api.get(cacheKey, {
+              signal: abortControllerRef.current.signal,
+            });
+            return res.data;
+          },
+          30000, // 30 second cache for search results
+        );
+
+        const newProducts = Array.isArray(response?.rows) ? response.rows : [];
+
+        if (reset) {
+          setProducts(newProducts);
+        } else {
+          setProducts((prev) => {
+            // Avoid duplicates
+            const existingIds = new Set(
+              prev.map((p) => `${p.item_id}-${p.chain_id}`),
+            );
+            const uniqueNew = newProducts.filter(
+              (p) => !existingIds.has(`${p.item_id}-${p.chain_id}`),
+            );
+            return [...prev, ...uniqueNew];
+          });
+        }
+
+        offsetRef.current =
+          response?.nextOffset || currentOffset + newProducts.length;
+        setHasMore(response?.hasMore ?? false);
+      } catch (err) {
+        if (err.name !== "AbortError" && err.code !== "ERR_CANCELED") {
+          console.error("Fetch error:", err);
+          notify(err.response?.data?.message || "שגיאה בטעינת תוצאות החיפוש");
+        }
+        setHasMore(false);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [limit, notify],
+  );
+
+  // Function to refresh current search (invalidate cache)
+  const refreshSearch = useCallback(() => {
     if (searchRef.current.trim()) {
+      // Invalidate cache for current search
+      const params = new URLSearchParams({
+        limit,
+        offset: 0,
+        q: searchRef.current.trim(),
+      });
+      const f = filtersRef.current;
+      if (f.category) params.append("category", f.category);
+      if (f.minPrice) params.append("minPrice", f.minPrice);
+      if (f.maxPrice) params.append("maxPrice", f.maxPrice);
+      if (f.sort) params.append("sort", f.sort);
+
+      const cacheKey = `/api/search?${params.toString()}`;
+      requestCache.invalidate(cacheKey);
+
+      // Refresh the products
+      offsetRef.current = 0;
+      setLoading(true);
+      fetchProducts(true);
+      setRefreshKey((prev) => prev + 1);
+    }
+  }, [limit, fetchProducts]);
+
+  const handleFilterChange = useCallback(
+    (newFilters) => {
+      filtersRef.current = newFilters;
+      if (searchRef.current.trim()) {
+        offsetRef.current = 0;
+        setLoading(true);
+        setSearched(true);
+        fetchProducts(true);
+      }
+    },
+    [fetchProducts],
+  );
+
+  const handleSearchChange = useCallback(
+    (value) => {
+      setSearchQuery(value);
+      searchRef.current = value;
+
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+
+      if (!value.trim()) {
+        setProducts([]);
+        setSearched(false);
+        setHasMore(false);
+        setShowSuggestions(true);
+        return;
+      }
+
+      setShowSuggestions(false);
+
+      // Debounce search with longer delay to prevent rapid requests
+      searchTimeoutRef.current = setTimeout(() => {
+        offsetRef.current = 0;
+        setLoading(true);
+        setSearched(true);
+        saveRecentSearch(value);
+        fetchProducts(true);
+      }, 500);
+    },
+    [fetchProducts, saveRecentSearch],
+  );
+
+  const selectRecentSearch = useCallback(
+    (query) => {
+      setSearchQuery(query);
+      searchRef.current = query;
+      setShowSuggestions(false);
       offsetRef.current = 0;
       setLoading(true);
       setSearched(true);
       fetchProducts(true);
-    }
-  };
+    },
+    [fetchProducts],
+  );
 
-  const handleSearchChange = (value) => {
-    setSearchQuery(value);
-    searchRef.current = value;
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    if (!value.trim()) {
-      setProducts([]);
-      setSearched(false);
-      setHasMore(false);
-      setShowSuggestions(true);
-      return;
-    }
-    setShowSuggestions(false);
-    searchTimeoutRef.current = setTimeout(() => {
-      offsetRef.current = 0;
-      setLoading(true);
-      setSearched(true);
-      saveRecentSearch(value);
-      fetchProducts(true);
-    }, 300);
-  };
-
-  const selectRecentSearch = (query) => {
-    setSearchQuery(query);
-    searchRef.current = query;
-    setShowSuggestions(false);
-    offsetRef.current = 0;
-    setLoading(true);
-    setSearched(true);
-    fetchProducts(true);
-  };
-
-  const clearRecentSearches = () => {
+  const clearRecentSearches = useCallback(() => {
     setRecentSearches([]);
     localStorage.removeItem("smartcart-recent-searches");
-  };
+  }, []);
 
-  const loadMore = () => {
+  const loadMore = useCallback(() => {
     if (!loading && hasMore) {
       setLoading(true);
       fetchProducts(false);
     }
-  };
+  }, [loading, hasMore, fetchProducts]);
 
-  const handleAddToList = async (product) => {
-    if (!user) return;
-    setSelectedProduct(product);
-    setQuantity(1);
-    setSelectedListId(null);
-    try {
-      const { data } = await api.get("/api/lists");
-      setLists(data.lists);
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה בטעינת הרשימות");
-    }
-  };
+  const handleAddToList = useCallback(
+    async (product) => {
+      if (!user) return;
+      setSelectedProduct(product);
+      setQuantity(1);
+      setSelectedListId(null);
+      try {
+        const { data } = await api.get("/api/lists");
+        setLists(data.lists);
+      } catch (err) {
+        notify(err.response?.data?.message || "שגיאה בטעינת הרשימות");
+      }
+    },
+    [user, notify],
+  );
 
-  const confirmAddToList = async () => {
+  const confirmAddToList = useCallback(async () => {
     if (!selectedListId || !selectedProduct) return;
     setAddingToList(true);
     try {
@@ -194,7 +345,33 @@ const Store = () => {
     } finally {
       setAddingToList(false);
     }
-  };
+  }, [selectedListId, selectedProduct, lists, isLinkedChild, quantity, notify]);
+
+  // Memoize ProductList props to prevent unnecessary re-renders
+  const productListProps = useMemo(
+    () => ({
+      products,
+      user,
+      isLinkedChild,
+      handleAddToList,
+      hasMore,
+      loadMore,
+      loading,
+      searchQuery,
+      refreshKey, // Add refreshKey to trigger re-renders when needed
+    }),
+    [
+      products,
+      user,
+      isLinkedChild,
+      handleAddToList,
+      hasMore,
+      loadMore,
+      loading,
+      searchQuery,
+      refreshKey,
+    ],
+  );
 
   return (
     <div className="page-fade-in" dir="rtl">
@@ -223,6 +400,7 @@ const Store = () => {
           loading={loading}
           onFocus={() => !searchQuery && setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+          onRefresh={refreshSearch} // Pass refresh callback to header
         />
 
         {/* Success */}
@@ -292,18 +470,7 @@ const Store = () => {
         {/* Filter bar — shown once the user has searched at least once. */}
         {searched && <ProductFilter onFilterChange={handleFilterChange} />}
 
-        {products.length > 0 && (
-          <ProductList
-            products={products}
-            user={user}
-            isLinkedChild={isLinkedChild}
-            handleAddToList={handleAddToList}
-            hasMore={hasMore}
-            loadMore={loadMore}
-            loading={loading}
-            searchQuery={searchQuery}
-          />
-        )}
+        {products.length > 0 && <ProductList {...productListProps} />}
       </div>
 
       <AddToListModal

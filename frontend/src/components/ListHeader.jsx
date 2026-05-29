@@ -1,17 +1,19 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function ListHeader({
   list,
   members,
   userRole,
   isLinkedChild,
-  navigate,
   onOpenInvite,
   onOpenChildren,
   onDeleteList,
   onLeaveList,
   onOpenSaveTemplate,
 }) {
+  const navigate = useNavigate();
+
   return (
     <div className="d-flex justify-content-between align-items-start mb-3">
       <div>
@@ -53,6 +55,13 @@ export default function ListHeader({
               </button>
               <button
                 className="sc-btn sc-btn-ghost"
+                onClick={onOpenSaveTemplate}
+                style={{ fontSize: "0.8rem", padding: "6px 12px" }}
+              >
+                <i className="bi bi-bookmark me-1"></i> תבנית
+              </button>
+              <button
+                className="sc-btn sc-btn-ghost"
                 onClick={onDeleteList}
                 style={{
                   fontSize: "0.8rem",
@@ -65,25 +74,27 @@ export default function ListHeader({
             </>
           )}
           {userRole === "member" && (
-            <button
-              className="sc-btn sc-btn-ghost"
-              onClick={onLeaveList}
-              style={{
-                fontSize: "0.8rem",
-                padding: "6px 12px",
-                color: "var(--sc-danger)",
-              }}
-            >
-              <i className="bi bi-box-arrow-left me-1"></i> עזוב
-            </button>
+            <>
+              <button
+                className="sc-btn sc-btn-ghost"
+                onClick={onOpenSaveTemplate}
+                style={{ fontSize: "0.8rem", padding: "6px 12px" }}
+              >
+                <i className="bi bi-bookmark me-1"></i> תבנית
+              </button>
+              <button
+                className="sc-btn sc-btn-ghost"
+                onClick={onLeaveList}
+                style={{
+                  fontSize: "0.8rem",
+                  padding: "6px 12px",
+                  color: "var(--sc-danger)",
+                }}
+              >
+                <i className="bi bi-box-arrow-left me-1"></i> עזוב
+              </button>
+            </>
           )}
-          <button
-            className="sc-btn sc-btn-ghost"
-            onClick={onOpenSaveTemplate}
-            style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-          >
-            <i className="bi bi-bookmark me-1"></i> תבנית
-          </button>
         </div>
       )}
     </div>
