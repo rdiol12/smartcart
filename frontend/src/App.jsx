@@ -27,39 +27,38 @@ function App() {
       <NotifyProvider>
         <AuthProvider>
           <BrowserRouter>
-          <NavBar />
-
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/store" element={<Store />} />
-            <Route path="/product/:id" element={<ProductPage />} />
-            <Route
-              path="/profile"
-              element={
-                <PrivateRoute>
-                  <Profile />
-                </PrivateRoute>
-              }
-            />
-            {/* Public — the page is shown immediately after the verify-email
-                redirect, and the session is still being bootstrapped via
-                /api/refresh at that point. Gating with PrivateRoute could
-                bounce the user to /login on a transient network blip. */}
-            <Route path="/verification-confirmed" element={<VerificationConfirmed />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/list" element={<PrivateRoute><MyLists /></PrivateRoute>} />
-            <Route path="/list/:listId" element={<PrivateRoute><ListDetail /></PrivateRoute>} />
-            <Route path="/join/:inviteCode" element={<PrivateRoute><JoinList /></PrivateRoute>} />
-            <Route path="/templates" element={<PrivateRoute parentOnly><Templates /></PrivateRoute>} />
-            <Route path="/family" element={<PrivateRoute parentOnly><FamilySettings /></PrivateRoute>} />
-          </Routes>
-        </BrowserRouter>
+            <NavBar />
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/store" element={<Store />} />
+              <Route path="/product/:id" element={<ProductPage />} />
+              <Route
+                path="/profile"
+                element={
+                  <PrivateRoute>
+                    <Profile />
+                  </PrivateRoute>
+                }
+              />
+              {/* Public — the page is shown immediately after the verify-email
+                  redirect, and the session is still being bootstrapped via
+                  /api/refresh at that point. Gating with PrivateRoute could
+                  bounce the user to /login on a transient network blip. */}
+              <Route path="/verification-confirmed" element={<VerificationConfirmed />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/list" element={<PrivateRoute><MyLists /></PrivateRoute>} />
+              <Route path="/list/:listId" element={<PrivateRoute><ListDetail /></PrivateRoute>} />
+              <Route path="/join/:inviteCode" element={<PrivateRoute><JoinList /></PrivateRoute>} />
+              <Route path="/templates" element={<PrivateRoute parentOnly><Templates /></PrivateRoute>} />
+              <Route path="/family" element={<PrivateRoute parentOnly><FamilySettings /></PrivateRoute>} />
+            </Routes>
+            <SpeedInsights /> 
+          </BrowserRouter>
         </AuthProvider>
       </NotifyProvider>
-      <SpeedInsights />
     </ThemeProvider>
   );
 }
