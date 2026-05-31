@@ -13,8 +13,6 @@ const Profile = () => {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
-
-  const [message, setMessage] = useState({ type: "", text: "" });
   const [saving, setSaving] = useState(false);
 
   // Delete-account state
@@ -25,15 +23,15 @@ const Profile = () => {
   const handleChangePassword = async (e) => {
     e.preventDefault();
     if (newPassword !== confirmNewPassword) {
-      setMessage({ type: "error", text: "הסיסמאות החדשות אינן תואמות" });
+      notify("הסיסמאות החדשות אינן תואמות");
       return;
     }
     if (newPassword.length < 8) {
-      setMessage({ type: "error", text: "הסיסמה החדשה חייבת להיות באורך 8 תווים לפחות" });
+      notify("הסיסמה החדשה חייבת להיות באורך 8 תווים לפחות");
       return;
     }
     if (currentPassword === newPassword) {
-      setMessage({ type: "error", text: "הסיסמה החדשה חייבת להיות שונה מהסיסמה הנוכחית" });
+      notify("הסיסמה החדשה חייבת להיות שונה מהסיסמה הנוכחית");
       return;
     }
     setSaving(true);
@@ -46,21 +44,13 @@ const Profile = () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
-      // The backend invalidates every refresh token and clears the cookie
-      // when the password changes (loggedOut: true on the response). Honor
-      // that here: drop the in-memory access token too (it'd otherwise
-      // remain valid for up to ~15 min until exp) and bounce to /login.
-      // Only on success — a failed change shouldn't log the user out.
       if (data?.loggedOut) {
         await clearSession({ setUser, navigate, callServer: false });
       } else {
-        setMessage({ type: "success", text: "הסיסמה שונתה בהצלחה" });
+        notify.success("הסיסמה שונתה בהצלחה");
       }
     } catch (err) {
-      setMessage({
-        type: "error",
-        text: err.response?.data?.message || "שינוי הסיסמה נכשל",
-      });
+      notify(err.response?.data?.message || "שינוי הסיסמה נכשל");
     } finally {
       setSaving(false);
     }
@@ -80,7 +70,7 @@ const Profile = () => {
   const handleDeleteAccount = async (e) => {
     e.preventDefault();
     if (!deletePassword) {
-      setMessage({ type: "error", text: "יש להזין את הסיסמה כדי לאשר מחיקה" });
+      notify("יש להזין את הסיסמה כדי לאשר מחיקה");
       return;
     }
     setDeleting(true);
@@ -88,10 +78,7 @@ const Profile = () => {
       await api.delete("/api/user", { data: { password: deletePassword } });
       await clearSession({ setUser, navigate, callServer: false });
     } catch (err) {
-      setMessage({
-        type: "error",
-        text: err.response?.data?.message || "מחיקת החשבון נכשלה",
-      });
+      notify(err.response?.data?.message || "מחיקת החשבון נכשלה");
       setDeleting(false);
     }
   };
@@ -110,42 +97,78 @@ const Profile = () => {
         <div className="row justify-content-center">
           <div className="col-lg-10">
             <h2 className="fw-bold mb-1">הגדרות חשבון</h2>
-            <p className="mb-4" style={{ color: "var(--sc-text-muted)", fontSize: "0.9rem" }}>
+            <p
+              className="mb-4"
+              style={{ color: "var(--sc-text-muted)", fontSize: "0.9rem" }}
+            >
               נהל את הפרטים והאבטחה של החשבון שלך
             </p>
-
-            {message.text && (
-              <div
-                className={`alert alert-${message.type === "error" ? "danger" : "success"} d-flex align-items-center`}
-                style={{ borderRadius: "10px", fontSize: "0.9rem" }}
-              >
-                <i className={`bi ${message.type === "success" ? "bi-check-circle" : "bi-exclamation-triangle"} me-2`}></i>
-                <span className="flex-grow-1">{message.text}</span>
-                <button type="button" className="btn-close" onClick={() => setMessage({ type: "", text: "" })}></button>
-              </div>
-            )}
 
             <div className="row g-4 justify-content-center">
               <div className="col-md-8 col-lg-6">
                 <div className="sc-glass p-4 mb-4">
                   <h5 className="fw-bold mb-3">
-                    <i className="bi bi-shield-lock me-2" style={{ color: "var(--sc-primary)" }}></i>
+                    <i
+                      className="bi bi-shield-lock me-2"
+                      style={{ color: "var(--sc-primary)" }}
+                    ></i>
                     אבטחה
                   </h5>
                   <form onSubmit={handleChangePassword}>
                     <div className="mb-3">
-                      <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה נוכחית</label>
-                      <input type="password" className="form-control sc-input" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" dir="ltr" />
+                      <label
+                        className="form-label fw-semibold"
+                        style={{ fontSize: "0.85rem" }}
+                      >
+                        סיסמה נוכחית
+                      </label>
+                      <input
+                        type="password"
+                        className="form-control sc-input"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        autoComplete="current-password"
+                        dir="ltr"
+                      />
                     </div>
                     <div className="mb-3">
-                      <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" dir="ltr" />
+                      <label
+                        className="form-label fw-semibold"
+                        style={{ fontSize: "0.85rem" }}
+                      >
+                        סיסמה חדשה
+                      </label>
+                      <input
+                        type="password"
+                        className="form-control sc-input"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        autoComplete="new-password"
+                        dir="ltr"
+                      />
                     </div>
                     <div className="mb-4">
-                      <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>אישור סיסמה חדשה</label>
-                      <input type="password" className="form-control sc-input" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} autoComplete="new-password" dir="ltr" />
+                      <label
+                        className="form-label fw-semibold"
+                        style={{ fontSize: "0.85rem" }}
+                      >
+                        אישור סיסמה חדשה
+                      </label>
+                      <input
+                        type="password"
+                        className="form-control sc-input"
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        autoComplete="new-password"
+                        dir="ltr"
+                      />
                     </div>
-                    <button type="submit" className="sc-btn sc-btn-ghost w-100" disabled={saving} style={{ padding: "10px" }}>
+                    <button
+                      type="submit"
+                      className="sc-btn sc-btn-ghost w-100"
+                      disabled={saving}
+                      style={{ padding: "10px" }}
+                    >
                       עדכן סיסמה
                     </button>
                   </form>
@@ -155,63 +178,110 @@ const Profile = () => {
                 {!isLinkedChild && (
                   <div className="sc-glass p-4 mb-4">
                     <h5 className="fw-bold mb-3">
-                      <i className="bi bi-people me-2" style={{ color: "var(--sc-primary)" }}></i>
+                      <i
+                        className="bi bi-people me-2"
+                        style={{ color: "var(--sc-primary)" }}
+                      ></i>
                       ניהול משפחה
                     </h5>
-                    <p style={{ fontSize: "0.85rem", color: "var(--sc-text-muted)" }}>
+                    <p
+                      style={{
+                        fontSize: "0.85rem",
+                        color: "var(--sc-text-muted)",
+                      }}
+                    >
                       צור חשבונות לילדים כדי לאשר מוצרים שהם מוסיפים
                     </p>
-                    <Link to="/family" className="sc-btn sc-btn-primary w-100" style={{ padding: "10px", textDecoration: "none", display: "block", textAlign: "center" }}>
+                    <Link
+                      to="/family"
+                      className="sc-btn sc-btn-primary w-100"
+                      style={{
+                        padding: "10px",
+                        textDecoration: "none",
+                        display: "block",
+                        textAlign: "center",
+                      }}
+                    >
                       <i className="bi bi-people me-1"></i> נהל ילדים
                     </Link>
                   </div>
                 )}
 
                 {/* Session */}
-                <div className="sc-glass p-4 mb-4" style={{ borderColor: "rgba(239, 68, 68, 0.2)" }}>
-                  <h5 className="fw-bold mb-3" style={{ color: "var(--sc-danger)" }}>
+                <div
+                  className="sc-glass p-4 mb-4"
+                  style={{ borderColor: "rgba(239, 68, 68, 0.2)" }}
+                >
+                  <h5
+                    className="fw-bold mb-3"
+                    style={{ color: "var(--sc-danger)" }}
+                  >
                     <i className="bi bi-box-arrow-right me-2"></i>
                     ניהול הפעלה
                   </h5>
                   <div className="d-grid gap-2">
-                    <button className="sc-btn sc-btn-danger w-100" onClick={handleLogout} style={{ padding: "10px" }}>
+                    <button
+                      className="sc-btn sc-btn-danger w-100"
+                      onClick={handleLogout}
+                      style={{ padding: "10px" }}
+                    >
                       <i className="bi bi-box-arrow-right me-2"></i> התנתק
                     </button>
-                    <button className="sc-btn sc-btn-ghost w-100" onClick={handleLogoutAllDevices} style={{ padding: "10px", color: "var(--sc-danger)", borderColor: "rgba(239, 68, 68, 0.3)" }}>
-                      <i className="bi bi-shield-exclamation me-2"></i> התנתק מכל המכשירים
+                    <button
+                      className="sc-btn sc-btn-ghost w-100"
+                      onClick={handleLogoutAllDevices}
+                      style={{
+                        padding: "10px",
+                        color: "var(--sc-danger)",
+                        borderColor: "rgba(239, 68, 68, 0.3)",
+                      }}
+                    >
+                      <i className="bi bi-shield-exclamation me-2"></i> התנתק
+                      מכל המכשירים
                     </button>
                   </div>
                 </div>
 
                 {/* Delete account — destructive, gated behind expand + password */}
-                <div className="sc-glass p-4" style={{ borderColor: "rgba(239, 68, 68, 0.35)" }}>
-                  <h5 className="fw-bold mb-3" style={{ color: "var(--sc-danger)" }}>
+                <div
+                  className="sc-glass p-4"
+                  style={{ borderColor: "rgba(239, 68, 68, 0.35)" }}
+                >
+                  <h5
+                    className="fw-bold mb-3"
+                    style={{ color: "var(--sc-danger)" }}
+                  >
                     <i className="bi bi-trash me-2"></i>
                     מחיקת חשבון
                   </h5>
-                  <p style={{ fontSize: "0.85rem", color: "var(--sc-text-muted)" }}>
-                    מחיקת החשבון תסיר את הפרטים שלך, את חשבונות הילדים המקושרים ואת כל המידע הפרטי. הפעולה אינה הפיכה.
+                  <p
+                    style={{
+                      fontSize: "0.85rem",
+                      color: "var(--sc-text-muted)",
+                    }}
+                  >
+                    מחיקת החשבון תסיר את הפרטים שלך, את חשבונות הילדים המקושרים
+                    ואת כל המידע הפרטי. הפעולה אינה הפיכה.
                   </p>
                   {!showDelete ? (
                     <button
                       className="sc-btn sc-btn-ghost w-100"
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            "האם אתה בטוח? מחיקת החשבון היא פעולה בלתי הפיכה.",
-                          )
-                        ) {
-                          setShowDelete(true);
-                        }
+                      onClick={() => setShowDelete(true)}
+                      style={{
+                        padding: "10px",
+                        color: "var(--sc-danger)",
+                        borderColor: "rgba(239, 68, 68, 0.3)",
                       }}
-                      style={{ padding: "10px", color: "var(--sc-danger)", borderColor: "rgba(239, 68, 68, 0.3)" }}
                     >
                       <i className="bi bi-trash me-2"></i> מחק את החשבון שלי
                     </button>
                   ) : (
                     <form onSubmit={handleDeleteAccount}>
                       <div className="mb-3">
-                        <label className="form-label fw-semibold" style={{ fontSize: "0.85rem" }}>
+                        <label
+                          className="form-label fw-semibold"
+                          style={{ fontSize: "0.85rem" }}
+                        >
                           הזן סיסמה לאישור
                         </label>
                         <input

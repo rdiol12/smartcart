@@ -36,7 +36,7 @@ export async function processAllFiles(folderPath) {
     if (!branchIdMatch) {
       branchIdMatch = file.match(/-(\d+)-/);
     }
-    const branchId = branchIdMatch ? branchIdMatch[1] : null;
+    const branchId = branchIdMatch ? branchIdMatch[1].replace(/^0+/, "") : null;
 
     if (!branchId) {
       // Move to unparseable/ rather than process/. Previously unparseable

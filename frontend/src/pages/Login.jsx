@@ -27,21 +27,13 @@ const Login = () => {
 
     setLoading(true);
     try {
-      // Route by full-shape email check, not .includes("@"). The schema
-      // doesn't forbid `@` in usernames, so "joe@home" used to land on the
-      // email branch and get rejected by the server-side isEmail validator
-      // — login impossible for that user. Simple HTML5-ish pattern is
-      // enough to distinguish "looks like an email" from "is a username".
       const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginId);
       const body = looksLikeEmail
         ? { email: loginId, password }
         : { username: loginId, password };
       const res = await api.post("/api/login", body);
-      setAccessToken(res.data.accessToken);
-      // setUser triggers AuthContext's [user] effect which attaches socket.auth
-      // and connects. Don't duplicate that here; previously this page set
-      // socket.auth + socket.connect inline, contradicting AuthContext's
-      // comment that it's the single source of truth for the socket lifecycle.
+      const refreshRes = await api.post("/api/refresh");
+      setAccessToken(refreshRes.data.accessToken);
       setUser(res.data.user);
       navigate("/");
     } catch (err) {

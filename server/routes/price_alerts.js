@@ -10,19 +10,26 @@ router.post("/", async (req, res) => {
   const { itemId, targetPrice } = req.body;
   const userId = req.userId;
 
-  if (!itemId || !targetPrice) {
-    return res
-      .status(400)
-      .json({ message: "itemId and targetPrice are required" });
+  const parsedItemId = parseInt(itemId, 10);
+  if (!Number.isInteger(parsedItemId) || parsedItemId <= 0) {
+    return res.status(400).json({ message: "Invalid itemId" });
   }
+  const parsedPrice = parseFloat(targetPrice);
+  if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+    return res.status(400).json({ message: "Invalid targetPrice" });
+  }
+
   try {
     const result = await db.query(
       `INSERT INTO app.price_alerts (user_id, item_id, target_price) VALUES ($1, $2, $3) RETURNING *`,
-      [userId, itemId, targetPrice],
+      [userId, parsedItemId, parsedPrice],
     );
     return res.status(201).json({ alert: result.rows[0] });
   } catch (err) {
-    logger.error("Error creating price alert", { error: err.message, stack: err.stack });
+    logger.error("Error creating price alert", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error creating price alert" });
   }
 });
@@ -41,23 +48,34 @@ router.get("/", async (req, res) => {
     );
     return res.json({ alerts: result.rows });
   } catch (err) {
-    logger.error("Error fetching price alerts", { error: err.message, stack: err.stack });
+    logger.error("Error fetching price alerts", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error fetching price alerts" });
   }
 });
 
 router.delete("/:id", async (req, res) => {
-  const alertId = req.params.id;
+  const alertId = parseInt(req.params.id, 10);
   const userId = req.userId;
-
+  if (!Number.isInteger(alertId) || alertId <= 0) {
+    return res.status(400).json({ message: "Invalid alert id" });
+  }
   try {
-    await db.query(
+    const result = await db.query(
       `UPDATE app.price_alerts SET active = false WHERE id = $1 AND user_id = $2`,
       [alertId, userId],
     );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Alert not found" });
+    }
     return res.json({ success: true });
   } catch (err) {
-    logger.error("Error deactivating price alert", { error: err.message, stack: err.stack });
+    logger.error("Error deactivating price alert", {
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ message: "Error deactivating price alert" });
   }
 });

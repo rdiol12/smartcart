@@ -1,137 +1,52 @@
-import React, { useState, useEffect, useContext } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useContext } from "react";
+import { useParams } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
-import api from "../api";
 import socket from "../socket";
 import ListItemRow from "../components/ListItemRow";
 import InviteLinkModal from "../components/InviteLinkModal";
 import SaveAsTemplateModal from "../components/SaveAsTemplateModal";
 import BarcodeScanner from "../components/BarcodeScanner";
-import ProductSearchForList from "../components/ProductSearchForList";
-import { useNotify } from "../context/NotifyContext";
+import CompareModal from "../components/CompareModal";
+import ChildrenModal from "../components/ChildrenModal";
+import AddItemForm from "../components/AddItemForm";
+import ListHeader from "../components/ListHeader";
+import ItemsList from "../components/ItemsList";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import { useListDetail } from "../hooks/useListDetail";
+import api from "../api";
 
 const ListDetail = () => {
   const { listId } = useParams();
   const { isLinkedChild } = useContext(AuthContext);
-  const navigate = useNavigate();
-  const notify = useNotify();
 
-  const [list, setList] = useState(null);
-  const [items, setItems] = useState([]);
-  const [members, setMembers] = useState([]);
-  const [userRole, setUserRole] = useState("member");
-  const [loading, setLoading] = useState(true);
+  const {
+    list,
+    items,
+    members,
+    userRole,
+    loading,
+    modals,
+    openModal,
+    closeModal,
+    selectedProduct,
+    setSelectedProduct,
+    itemQty,
+    setItemQty,
+    requestMsg,
+    setRequestMsg,
+    clearSelectedProduct,
+    compareData,
+    compareLoading,
+    childrenList,
+    childrenLoading,
+    handleCompare,
+    handleOpenChildren,
+    handleToggleChild,
+    handleDeleteList,
+    handleLeaveList,
+  } = useListDetail(listId);
 
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [itemQty, setItemQty] = useState(1);
-
-  const [showInvite, setShowInvite] = useState(false);
-  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
-
-  // Comparison modal state
-  const [showCompare, setShowCompare] = useState(false);
-  const [compareData, setCompareData] = useState(null);
-  const [compareLoading, setCompareLoading] = useState(false);
-
-  // Child management modal state
-  const [showChildrenModal, setShowChildrenModal] = useState(false);
-  const [childrenList, setChildrenList] = useState([]);
-  const [childrenLoading, setChildrenLoading] = useState(false);
-
-  // Inline modals (price compare + child management) live in this file
-  // rather than as standalone components, so we lock body scroll here.
-  // The standalone modals (InviteLinkModal, SaveAsTemplateModal,
-  // BarcodeScanner) handle their own locks via the same hook.
-  useBodyScrollLock(showCompare || showChildrenModal);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const { data } = await api.get(`/api/lists/${listId}/items`);
-        setList(data.list);
-        setItems(data.items);
-        setMembers(data.members);
-        setUserRole(data.userRole);
-      } catch (err) {
-        if (err.response?.status === 403) {
-          navigate("/list");
-        } else {
-          notify(err.response?.data?.message || "שגיאה בטעינת הרשימה");
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-
-    socket.emit("join_list", listId);
-
-    const onReceiveItem = (newItem) => {
-      setItems((prev) => [newItem, ...prev]);
-    };
-    const onItemStatusChanged = ({ itemId, isChecked }) => {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === itemId ? { ...i, is_checked: isChecked } : i,
-        ),
-      );
-    };
-    const onItemDeleted = ({ itemId }) => {
-      setItems((prev) => prev.filter((i) => i.id !== itemId));
-    };
-    const onNoteUpdated = ({ itemId, note, note_by, note_by_name }) => {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === itemId ? { ...i, note, note_by, note_by_name } : i,
-        ),
-      );
-    };
-    const onItemPaid = ({ itemId, paid_by, paid_by_name, paid_at }) => {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === itemId ? { ...i, paid_by, paid_by_name, paid_at } : i,
-        ),
-      );
-    };
-    const onItemUnpaid = ({ itemId }) => {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === itemId
-            ? { ...i, paid_by: null, paid_by_name: null, paid_at: null }
-            : i,
-        ),
-      );
-    };
-
-    socket.on("receive_item", onReceiveItem);
-    socket.on("item_status_changed", onItemStatusChanged);
-    socket.on("item_deleted", onItemDeleted);
-    socket.on("note_updated", onNoteUpdated);
-    socket.on("item_paid", onItemPaid);
-    socket.on("item_unpaid", onItemUnpaid);
-
-    return () => {
-      socket.off("receive_item", onReceiveItem);
-      socket.off("item_status_changed", onItemStatusChanged);
-      socket.off("item_deleted", onItemDeleted);
-      socket.off("note_updated", onNoteUpdated);
-      socket.off("item_paid", onItemPaid);
-      socket.off("item_unpaid", onItemUnpaid);
-    };
-  }, [listId, navigate, notify]);
-
-  const [requestMsg, setRequestMsg] = useState("");
-
-  const handleSelectProduct = (product) => {
-    setSelectedProduct(product);
-  };
-
-  const clearSelectedProduct = () => {
-    setSelectedProduct(null);
-    setItemQty(1);
-  };
+  useBodyScrollLock(modals.compare || modals.children);
 
   const handleAddItem = async (e) => {
     e.preventDefault();
@@ -160,14 +75,11 @@ const ListDetail = () => {
         price: selectedProduct.price || null,
         storeName: selectedProduct.chain_name || null,
         quantity: itemQty,
-        addat: new Date(),
-        updatedat: new Date(),
         productId: selectedProduct.item_id || null,
       });
     }
 
-    setSelectedProduct(null);
-    setItemQty(1);
+    clearSelectedProduct();
   };
 
   const handleBarcodeResult = (product) => {
@@ -177,80 +89,7 @@ const ListDetail = () => {
       price: product.prices?.[0]?.price || null,
       chain_name: product.prices?.[0]?.chain_name || null,
     });
-    setShowScanner(false);
-  };
-
-  const handleCompare = async () => {
-    setShowCompare(true);
-    setCompareLoading(true);
-    try {
-      const { data } = await api.get(`/api/lists/${listId}/compare`);
-      setCompareData(data);
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה בהשוואת מחירים");
-    } finally {
-      setCompareLoading(false);
-    }
-  };
-
-  const handleOpenChildren = async () => {
-    setShowChildrenModal(true);
-    setChildrenLoading(true);
-    try {
-      const { data } = await api.get(`/api/family/lists/${listId}/children`);
-      setChildrenList(data.children);
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה בטעינת חשבונות הילדים");
-    } finally {
-      setChildrenLoading(false);
-    }
-  };
-
-  const handleToggleChild = async (childId, currentlyMember) => {
-    try {
-      if (currentlyMember) {
-        await api.delete(`/api/family/lists/${listId}/children/${childId}`);
-      } else {
-        await api.post(`/api/family/lists/${listId}/children/${childId}`);
-      }
-      setChildrenList((prev) =>
-        prev.map((c) =>
-          c.id === childId ? { ...c, is_member: !currentlyMember } : c,
-        ),
-      );
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה בעדכון חשבון הילד");
-    }
-  };
-
-  const handleDeleteList = async () => {
-    if (
-      !confirm(
-        `האם למחוק את הרשימה "${list?.list_name}"? פעולה זו תמחק את כל הפריטים והחברים.`,
-      )
-    ) {
-      return;
-    }
-
-    try {
-      await api.delete(`/api/lists/${listId}`);
-      navigate("/list");
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה במחיקת הרשימה");
-    }
-  };
-
-  const handleLeaveList = async () => {
-    if (!confirm(`האם לעזוב את הרשימה "${list?.list_name}"?`)) {
-      return;
-    }
-
-    try {
-      await api.post(`/api/lists/${listId}/leave`);
-      navigate("/list");
-    } catch (err) {
-      notify(err.response?.data?.message || "שגיאה ביציאה מהרשימה");
-    }
+    closeModal("scanner");
   };
 
   if (loading) {
@@ -262,92 +101,27 @@ const ListDetail = () => {
   }
 
   const checkedCount = items.filter((i) => i.is_checked || i.paid_by).length;
-  const basketTotal = items.reduce((sum, item) => {
-    return (
-      sum + (parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 1)
-    );
-  }, 0);
+  const basketTotal = items.reduce(
+    (sum, item) =>
+      sum + (parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 1),
+    0,
+  );
 
   return (
     <div className="page-fade-in" dir="rtl">
       <div className="container py-4" style={{ maxWidth: "720px" }}>
-        {/* Header */}
-        <div className="d-flex justify-content-between align-items-start mb-3">
-          <div>
-            <button
-              className="sc-btn sc-btn-ghost mb-2"
-              onClick={() => navigate("/list")}
-              style={{ fontSize: "0.8rem", padding: "4px 12px" }}
-            >
-              <i className="bi bi-arrow-right me-1"></i> חזרה
-            </button>
-            <h3 className="fw-bold mb-1">{list?.list_name}</h3>
-            <div
-              className="d-flex align-items-center gap-3"
-              style={{ color: "var(--sc-text-muted)", fontSize: "0.85rem" }}
-            >
-              <span>
-                <i className="bi bi-people me-1"></i>
-                {members.map((m) => m.first_name).join(", ")}
-              </span>
-            </div>
-          </div>
-          {!isLinkedChild && (
-            <div className="d-flex gap-2">
-              {userRole === "admin" && (
-                <>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={() => setShowInvite(true)}
-                    style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-                  >
-                    <i className="bi bi-person-plus me-1"></i> הזמן
-                  </button>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={handleOpenChildren}
-                    style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-                  >
-                    <i className="bi bi-people me-1"></i> ילדים
-                  </button>
-                  <button
-                    className="sc-btn sc-btn-ghost"
-                    onClick={handleDeleteList}
-                    style={{
-                      fontSize: "0.8rem",
-                      padding: "6px 12px",
-                      color: "var(--sc-danger)",
-                    }}
-                  >
-                    <i className="bi bi-trash me-1"></i> מחק
-                  </button>
-                </>
-              )}
-              {userRole === "member" && (
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={handleLeaveList}
-                  style={{
-                    fontSize: "0.8rem",
-                    padding: "6px 12px",
-                    color: "var(--sc-danger)",
-                  }}
-                >
-                  <i className="bi bi-box-arrow-left me-1"></i> עזוב
-                </button>
-              )}
-              <button
-                className="sc-btn sc-btn-ghost"
-                onClick={() => setShowSaveTemplate(true)}
-                style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-              >
-                <i className="bi bi-bookmark me-1"></i> תבנית
-              </button>
-            </div>
-          )}
-        </div>
+        <ListHeader
+          list={list}
+          members={members}
+          userRole={userRole}
+          isLinkedChild={isLinkedChild}
+          onOpenInvite={() => openModal("invite")}
+          onOpenChildren={handleOpenChildren}
+          onDeleteList={handleDeleteList}
+          onLeaveList={handleLeaveList}
+          onOpenSaveTemplate={() => openModal("saveTemplate")}
+        />
 
-        {/* Progress bar */}
         {items.length > 0 && (
           <div className="mb-3">
             <div
@@ -380,7 +154,6 @@ const ListDetail = () => {
           </div>
         )}
 
-        {/* Basket Total + Compare */}
         {items.length > 0 && (
           <div className="sc-card p-3 mb-3 d-flex justify-content-between align-items-center">
             <div>
@@ -406,584 +179,49 @@ const ListDetail = () => {
           </div>
         )}
 
-        {/* Add Item */}
-        <div className="sc-card p-3 mb-3">
-          {selectedProduct ? (
-            /* Selected product - show details + add button */
-            <form onSubmit={handleAddItem}>
-              <div className="d-flex align-items-center gap-3">
-                <div
-                  style={{
-                    width: "38px",
-                    height: "38px",
-                    borderRadius: "10px",
-                    flexShrink: 0,
-                    background:
-                      "linear-gradient(135deg, rgba(79,70,229,0.1), rgba(6,182,212,0.08))",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <i
-                    className="bi bi-box-seam"
-                    style={{ color: "var(--sc-primary)", fontSize: "0.9rem" }}
-                  ></i>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="fw-bold" style={{ fontSize: "0.9rem" }}>
-                    {selectedProduct.item_name}
-                  </div>
-                  <small style={{ color: "var(--sc-text-muted)" }}>
-                    {selectedProduct.price ? `₪${selectedProduct.price}` : ""}
-                    {selectedProduct.chain_name
-                      ? ` · ${selectedProduct.chain_name}`
-                      : ""}
-                  </small>
-                </div>
-                <div
-                  className="d-flex align-items-center gap-2"
-                  style={{
-                    background: "var(--sc-bg)",
-                    borderRadius: "10px",
-                    padding: "4px 8px",
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="sc-icon-btn"
-                    onClick={() => setItemQty(Math.max(1, itemQty - 1))}
-                    style={{ width: "26px", height: "26px" }}
-                  >
-                    <i
-                      className="bi bi-dash"
-                      style={{ fontSize: "0.8rem" }}
-                    ></i>
-                  </button>
-                  <span
-                    className="fw-bold"
-                    style={{
-                      fontSize: "0.9rem",
-                      minWidth: "18px",
-                      textAlign: "center",
-                    }}
-                  >
-                    {itemQty}
-                  </span>
-                  <button
-                    type="button"
-                    className="sc-icon-btn"
-                    onClick={() => setItemQty(itemQty + 1)}
-                    style={{ width: "26px", height: "26px" }}
-                  >
-                    <i
-                      className="bi bi-plus"
-                      style={{ fontSize: "0.8rem" }}
-                    ></i>
-                  </button>
-                </div>
-                <button
-                  type="submit"
-                  className={`sc-btn ${isLinkedChild ? "sc-btn-ghost" : "sc-btn-primary"}`}
-                  style={{ padding: "8px 16px", whiteSpace: "nowrap" }}
-                >
-                  {isLinkedChild ? (
-                    <>
-                      <i className="bi bi-send me-1"></i> בקש
-                    </>
-                  ) : (
-                    <i className="bi bi-plus-lg"></i>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sc-icon-btn"
-                  onClick={clearSelectedProduct}
-                  title="בטל"
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="d-flex gap-2 align-items-start">
-              <div style={{ flexGrow: 1, minWidth: 0 }}>
-                <ProductSearchForList onSelect={handleSelectProduct} />
-              </div>
-              <button
-                type="button"
-                className="sc-icon-btn"
-                onClick={() => setShowScanner(true)}
-                title="סרוק ברקוד"
-              >
-                <i className="bi bi-upc-scan"></i>
-              </button>
-            </div>
-          )}
-          {requestMsg && (
-            <div
-              className="mt-2"
-              style={{
-                fontSize: "0.85rem",
-                color: "var(--sc-primary)",
-                fontWeight: 500,
-              }}
-            >
-              <i className="bi bi-info-circle me-1"></i>
-              {requestMsg}
-            </div>
-          )}
-        </div>
+        <AddItemForm
+          selectedProduct={selectedProduct}
+          itemQty={itemQty}
+          setItemQty={setItemQty}
+          setSelectedProduct={setSelectedProduct}
+          isLinkedChild={isLinkedChild}
+          onSubmit={handleAddItem}
+          onOpenScanner={() => openModal("scanner")}
+          requestMsg={requestMsg}
+          clearSelectedProduct={clearSelectedProduct}
+        />
 
-        {/* Items List */}
-        {items.length === 0 ? (
-          <div className="sc-card">
-            <div className="sc-empty" style={{ padding: "2rem" }}>
-              <div className="sc-empty-icon">
-                <i className="bi bi-basket"></i>
-              </div>
-              <h4>הרשימה ריקה</h4>
-              <p>הוסף פריטים למעלה כדי להתחיל</p>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {items.map((item) => (
-              <ListItemRow key={item.id} item={item} listId={listId} />
-            ))}
-          </div>
-        )}
+        <ItemsList items={items} listId={listId} />
 
-        {/* Modals */}
         <InviteLinkModal
-          show={showInvite}
-          onClose={() => setShowInvite(false)}
+          show={modals.invite}
+          onClose={() => closeModal("invite")}
           listId={listId}
         />
         <SaveAsTemplateModal
-          show={showSaveTemplate}
-          onClose={() => setShowSaveTemplate(false)}
+          show={modals.saveTemplate}
+          onClose={() => closeModal("saveTemplate")}
           listId={listId}
         />
-        {showScanner && (
+        {modals.scanner && (
           <BarcodeScanner
             onResult={handleBarcodeResult}
-            onClose={() => setShowScanner(false)}
+            onClose={() => closeModal("scanner")}
           />
         )}
-
-        {/* Price Comparison Modal */}
-        {showCompare && (
-          <div
-            className="sc-modal-overlay"
-            onClick={() => setShowCompare(false)}
-            dir="rtl"
-          >
-            <div
-              className="sc-modal"
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "560px" }}
-            >
-              <div className="sc-modal-header">
-                <h5>
-                  <i className="bi bi-bar-chart me-2"></i>השוואת מחירים
-                </h5>
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setShowCompare(false)}
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-
-              <div
-                className="sc-modal-body"
-                style={{ maxHeight: "70vh", overflowY: "auto" }}
-              >
-                {compareLoading ? (
-                  <div className="text-center py-5">
-                    <div
-                      className="sc-spinner"
-                      style={{ margin: "0 auto" }}
-                    ></div>
-                    <p
-                      className="mt-3"
-                      style={{ color: "var(--sc-text-muted)" }}
-                    >
-                      מחשב מחירים...
-                    </p>
-                  </div>
-                ) : !compareData ? (
-                  <div
-                    className="text-center py-4"
-                    style={{ color: "var(--sc-text-muted)" }}
-                  >
-                    שגיאה בטעינת ההשוואה
-                  </div>
-                ) : (
-                  <>
-                    {/* Unlinked items warning */}
-                    {compareData.unlinkedCount > 0 && (
-                      <div
-                        style={{
-                          padding: "10px 14px",
-                          borderRadius: "var(--sc-radius)",
-                          marginBottom: "12px",
-                          background: "rgba(245, 158, 11, 0.08)",
-                          border: "1px solid rgba(245, 158, 11, 0.2)",
-                          fontSize: "0.82rem",
-                          color: "#b45309",
-                        }}
-                      >
-                        <i className="bi bi-info-circle me-1"></i>
-                        {compareData.unlinkedCount} פריטים הוזנו ידנית ולא
-                        נכללים בהשוואה
-                      </div>
-                    )}
-
-                    {compareData.linkedCount === 0 ? (
-                      <div
-                        className="text-center py-4"
-                        style={{ color: "var(--sc-text-muted)" }}
-                      >
-                        <i
-                          className="bi bi-link-45deg"
-                          style={{ fontSize: "2rem", opacity: 0.4 }}
-                        ></i>
-                        <p className="mt-2 mb-0">
-                          אין פריטים מקושרים למוצרים בחנות. הוסף פריטים מדף
-                          החנות כדי להשוות מחירים.
-                        </p>
-                      </div>
-                    ) : compareData.chains.length === 0 ? (
-                      <div
-                        className="text-center py-4"
-                        style={{ color: "var(--sc-text-muted)" }}
-                      >
-                        <p className="mb-0">
-                          לא נמצאו מחירים עבור הפריטים ברשימה
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="d-flex flex-column gap-3">
-                        {compareData.chains.map((chain, idx) => (
-                          <div
-                            key={chain.chainId}
-                            style={{
-                              border:
-                                idx === 0
-                                  ? "2px solid var(--sc-success)"
-                                  : "1px solid var(--sc-border)",
-                              borderRadius: "var(--sc-radius)",
-                              overflow: "hidden",
-                            }}
-                          >
-                            {/* Chain header */}
-                            <div
-                              style={{
-                                padding: "12px 16px",
-                                background:
-                                  idx === 0
-                                    ? "rgba(16, 185, 129, 0.06)"
-                                    : "var(--sc-bg)",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                              }}
-                            >
-                              <div className="d-flex align-items-center gap-2">
-                                <i
-                                  className="bi bi-shop"
-                                  style={{
-                                    color:
-                                      idx === 0
-                                        ? "var(--sc-success)"
-                                        : "var(--sc-text-muted)",
-                                  }}
-                                ></i>
-                                <span
-                                  className="fw-bold"
-                                  style={{ fontSize: "0.95rem" }}
-                                >
-                                  {chain.chainName}
-                                </span>
-                                {idx === 0 && (
-                                  <span
-                                    className="sc-badge"
-                                    style={{
-                                      background: "var(--sc-success)",
-                                      color: "#fff",
-                                      fontSize: "0.7rem",
-                                      padding: "2px 8px",
-                                    }}
-                                  >
-                                    הכי זול
-                                  </span>
-                                )}
-                              </div>
-                              <div className="d-flex align-items-center gap-2">
-                                {!chain.complete && (
-                                  <span
-                                    style={{
-                                      fontSize: "0.75rem",
-                                      color: "#b45309",
-                                    }}
-                                  >
-                                    <i className="bi bi-exclamation-triangle me-1"></i>
-                                    חסרים {chain.missingCount}
-                                  </span>
-                                )}
-                                <span
-                                  className="fw-bold"
-                                  style={{
-                                    fontSize: "1.1rem",
-                                    color:
-                                      idx === 0
-                                        ? "var(--sc-success)"
-                                        : "var(--sc-text)",
-                                  }}
-                                >
-                                  ₪{chain.total.toFixed(2)}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Expandable item breakdown */}
-                            <details
-                              style={{
-                                borderTop: "1px solid var(--sc-border)",
-                              }}
-                            >
-                              <summary
-                                style={{
-                                  padding: "8px 16px",
-                                  cursor: "pointer",
-                                  fontSize: "0.8rem",
-                                  color: "var(--sc-text-muted)",
-                                  userSelect: "none",
-                                }}
-                              >
-                                פירוט פריטים ({chain.items.length})
-                              </summary>
-                              <div style={{ padding: "0 16px 12px" }}>
-                                {chain.items.map((ci, i) => (
-                                  <div
-                                    key={i}
-                                    className="d-flex justify-content-between align-items-center"
-                                    style={{
-                                      padding: "6px 0",
-                                      borderBottom:
-                                        i < chain.items.length - 1
-                                          ? "1px solid var(--sc-border)"
-                                          : "none",
-                                      fontSize: "0.82rem",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        color: ci.available
-                                          ? "var(--sc-text)"
-                                          : "#dc2626",
-                                      }}
-                                    >
-                                      {ci.itemName}
-                                      {ci.quantity > 1 && (
-                                        <span
-                                          style={{
-                                            color: "var(--sc-text-muted)",
-                                          }}
-                                        >
-                                          {" "}
-                                          x{ci.quantity}
-                                        </span>
-                                      )}
-                                    </span>
-                                    {ci.available ? (
-                                      <span
-                                        style={{
-                                          color: "var(--sc-text-muted)",
-                                        }}
-                                      >
-                                        ₪{ci.price.toFixed(2)}
-                                        {ci.quantity > 1 &&
-                                          ` = ₪${ci.subtotal.toFixed(2)}`}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        style={{
-                                          color: "#dc2626",
-                                          fontWeight: 600,
-                                        }}
-                                      >
-                                        לא זמין
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </details>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <div className="sc-modal-footer">
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={() => setShowCompare(false)}
-                >
-                  סגור
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Children Management Modal */}
-        {showChildrenModal && (
-          <div
-            className="sc-modal-overlay"
-            onClick={() => setShowChildrenModal(false)}
-            dir="rtl"
-          >
-            <div
-              className="sc-modal"
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "440px" }}
-            >
-              <div className="sc-modal-header">
-                <h5>
-                  <i className="bi bi-people me-2"></i>ניהול גישת ילדים
-                </h5>
-                <button
-                  className="sc-icon-btn"
-                  onClick={() => setShowChildrenModal(false)}
-                >
-                  <i className="bi bi-x-lg"></i>
-                </button>
-              </div>
-
-              <div className="sc-modal-body">
-                {childrenLoading ? (
-                  <div className="text-center py-4">
-                    <div
-                      className="sc-spinner"
-                      style={{ margin: "0 auto" }}
-                    ></div>
-                  </div>
-                ) : childrenList.length === 0 ? (
-                  <div
-                    className="text-center py-4"
-                    style={{ color: "var(--sc-text-muted)" }}
-                  >
-                    <i
-                      className="bi bi-person-x"
-                      style={{ fontSize: "2rem", opacity: 0.4 }}
-                    ></i>
-                    <p className="mt-2 mb-0">אין חשבונות ילדים מקושרים</p>
-                    <small>צור חשבון ילד בהגדרות הפרופיל</small>
-                  </div>
-                ) : (
-                  <div className="d-flex flex-column gap-2">
-                    {childrenList.map((child) => (
-                      <div
-                        key={child.id}
-                        className="d-flex justify-content-between align-items-center"
-                        style={{
-                          padding: "12px 16px",
-                          borderRadius: "var(--sc-radius)",
-                          background: child.is_member
-                            ? "rgba(16, 185, 129, 0.06)"
-                            : "var(--sc-bg)",
-                          border: child.is_member
-                            ? "1px solid rgba(16, 185, 129, 0.2)"
-                            : "1px solid var(--sc-border)",
-                        }}
-                      >
-                        <div className="d-flex align-items-center gap-2">
-                          <div
-                            style={{
-                              width: "34px",
-                              height: "34px",
-                              borderRadius: "50%",
-                              background:
-                                "linear-gradient(135deg, rgba(79,70,229,0.1), rgba(6,182,212,0.08))",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <i
-                              className="bi bi-person"
-                              style={{
-                                color: "var(--sc-primary)",
-                                fontSize: "0.9rem",
-                              }}
-                            ></i>
-                          </div>
-                          <div>
-                            <div
-                              className="fw-bold"
-                              style={{ fontSize: "0.9rem" }}
-                            >
-                              {child.first_name}
-                            </div>
-                            {child.username && (
-                              <small style={{ color: "var(--sc-text-muted)" }}>
-                                @{child.username}
-                              </small>
-                            )}
-                          </div>
-                        </div>
-                        <div
-                          onClick={() =>
-                            handleToggleChild(child.id, child.is_member)
-                          }
-                          style={{
-                            width: "44px",
-                            height: "24px",
-                            borderRadius: "12px",
-                            cursor: "pointer",
-                            background: child.is_member
-                              ? "var(--sc-success)"
-                              : "var(--sc-border)",
-                            position: "relative",
-                            transition: "background 0.2s ease",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "20px",
-                              height: "20px",
-                              borderRadius: "50%",
-                              background: "#fff",
-                              position: "absolute",
-                              top: "2px",
-                              right: child.is_member ? "2px" : "22px",
-                              transition: "right 0.2s ease",
-                              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="sc-modal-footer">
-                <button
-                  className="sc-btn sc-btn-ghost"
-                  onClick={() => setShowChildrenModal(false)}
-                >
-                  סגור
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <CompareModal
+          show={modals.compare}
+          onClose={() => closeModal("compare")}
+          data={compareData}
+          loading={compareLoading}
+        />
+        <ChildrenModal
+          show={modals.children}
+          onClose={() => closeModal("children")}
+          childrenList={childrenList}
+          loading={childrenLoading}
+          onToggleChild={handleToggleChild}
+        />
       </div>
     </div>
   );
