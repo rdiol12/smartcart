@@ -7,11 +7,18 @@ import { addItem } from "../services/listItems.js";
 import { parseSocketPayload } from "../utils/socketValidate.js";
 import { rateLimitOk } from "../utils/tokenBucket.js";
 import {
-  joinListSchema,
+  createListSchema,
   sendItemSchema,
   toggleItemSchema,
   deleteItemSchema,
+  markPaidSchema,
   updateQuantitySchema,
+  updateNoteSchema,
+  addCommentSchema,
+  sendChatMessageSchema,
+  assignItemSchema,
+  reorderItemsSchema,
+  joinListSchema,
 } from "../utils/socketSchemas.js";
 
 const EVENTS = {
