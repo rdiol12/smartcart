@@ -36,7 +36,7 @@ function parseTrustProxy(v) {
   if (v === "true") return true;
   if (v === "false") return false;
   const n = Number(v);
-  return Number.isFinite(n) ? n : v;
+  return Number.isInteger(n) ? n : v;
 }
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY));
 const server = http.createServer(app);
@@ -64,12 +64,12 @@ try {
 }
 
 // Middleware
+app.use(cors(corsOptions));
 app.use(correlationId); // Tag every request with X-Correlation-ID for log tracing
-app.use(requestLogger); // Structured logging
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors(corsOptions));
+app.use(requestLogger); // Structured logging
 
 app.locals.io = io;
 

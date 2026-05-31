@@ -15,26 +15,34 @@ import StoreHeader from "../components/StoreHeader";
 import ProductList from "../components/ProductList";
 import AddToListModal from "../components/AddToListModal";
 
-// Request cache to prevent duplicate API calls
+// Request cache to prevent duplicate API calls for identical in-flight requests.
+// The abort signal is intentionally NOT passed through the cache — the cache
+// owns the pending promise, and aborting it from outside would cancel all
+// callers sharing that promise. Abort is handled before the cache lookup instead.
 class RequestCache {
   constructor() {
     this.pendingRequests = new Map();
     this.cache = new Map();
   }
 
+  isCachedOrPending(key, ttl = 30000) {
+    if (this.pendingRequests.has(key)) return true;
+    const cached = this.cache.get(key);
+    return !!(cached && Date.now() - cached.timestamp < ttl);
+  }
+
   async request(key, requestFn, ttl = 30000) {
-    // Check for pending request
+    // Return in-flight promise so concurrent callers share one request
     if (this.pendingRequests.has(key)) {
       return this.pendingRequests.get(key);
     }
 
-    // Check cache
+    // Return cached result if still fresh
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.timestamp < ttl) {
       return cached.data;
     }
 
-    // Make request
     const promise = requestFn()
       .then((data) => {
         this.cache.set(key, { data, timestamp: Date.now() });
@@ -53,7 +61,6 @@ class RequestCache {
     this.cache.clear();
   }
 
-  // Method to invalidate specific cache entry
   invalidate(key) {
     this.cache.delete(key);
   }
@@ -72,7 +79,7 @@ const Store = () => {
   const [searched, setSearched] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
-  const [refreshKey, setRefreshKey] = useState(0); // Add refresh key to force re-renders
+  const [refreshKey, setRefreshKey] = useState(0);
   const searchTimeoutRef = useRef(null);
   const abortControllerRef = useRef(null);
   const limit = 20;
@@ -100,7 +107,6 @@ const Store = () => {
       }
     }
 
-    // Cleanup on unmount
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -111,7 +117,6 @@ const Store = () => {
     };
   }, []);
 
-  // Save search to recent
   const saveRecentSearch = useCallback((query) => {
     if (!query.trim()) return;
     setRecentSearches((prev) => {
@@ -124,7 +129,22 @@ const Store = () => {
     });
   }, []);
 
-  // Fetch products with caching and abort support
+  // Build cache key from current search params
+  const buildCacheKey = useCallback(
+    (offset) => {
+      const q = searchRef.current.trim();
+      if (!q) return null;
+      const params = new URLSearchParams({ limit, offset, q });
+      const f = filtersRef.current;
+      if (f.category) params.append("category", f.category);
+      if (f.minPrice) params.append("minPrice", f.minPrice);
+      if (f.maxPrice) params.append("maxPrice", f.maxPrice);
+      if (f.sort) params.append("sort", f.sort);
+      return `/api/search?${params.toString()}`;
+    },
+    [limit],
+  );
+
   const fetchProducts = useCallback(
     async (reset = false) => {
       const q = searchRef.current.trim();
@@ -135,35 +155,29 @@ const Store = () => {
         return;
       }
 
-      // Abort previous request
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      const currentOffset = reset ? 0 : offsetRef.current;
+      const cacheKey = buildCacheKey(currentOffset);
+
+      // Only abort the previous network request if this query isn't already
+      // cached or in-flight. Aborting a shared pending promise would cancel
+      // all callers — instead we skip the abort and let the cache serve it.
+      if (!requestCache.isCachedOrPending(cacheKey)) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
       }
 
-      abortControllerRef.current = new AbortController();
-
-      const currentOffset = reset ? 0 : offsetRef.current;
-
-      // Create cache key from request params
-      const params = new URLSearchParams({ limit, offset: currentOffset, q });
-      const f = filtersRef.current;
-      if (f.category) params.append("category", f.category);
-      if (f.minPrice) params.append("minPrice", f.minPrice);
-      if (f.maxPrice) params.append("maxPrice", f.maxPrice);
-      if (f.sort) params.append("sort", f.sort);
-
-      const cacheKey = `/api/search?${params.toString()}`;
+      const signal = abortControllerRef.current?.signal;
 
       try {
         const response = await requestCache.request(
           cacheKey,
           async () => {
-            const res = await api.get(cacheKey, {
-              signal: abortControllerRef.current.signal,
-            });
+            const res = await api.get(cacheKey, { signal });
             return res.data;
           },
-          30000, // 30 second cache for search results
+          30000,
         );
 
         const newProducts = Array.isArray(response?.rows) ? response.rows : [];
@@ -172,7 +186,6 @@ const Store = () => {
           setProducts(newProducts);
         } else {
           setProducts((prev) => {
-            // Avoid duplicates
             const existingIds = new Set(
               prev.map((p) => `${p.item_id}-${p.chain_id}`),
             );
@@ -196,34 +209,20 @@ const Store = () => {
         setLoading(false);
       }
     },
-    [limit, notify],
+    [limit, notify, buildCacheKey],
   );
 
-  // Function to refresh current search (invalidate cache)
   const refreshSearch = useCallback(() => {
-    if (searchRef.current.trim()) {
-      // Invalidate cache for current search
-      const params = new URLSearchParams({
-        limit,
-        offset: 0,
-        q: searchRef.current.trim(),
-      });
-      const f = filtersRef.current;
-      if (f.category) params.append("category", f.category);
-      if (f.minPrice) params.append("minPrice", f.minPrice);
-      if (f.maxPrice) params.append("maxPrice", f.maxPrice);
-      if (f.sort) params.append("sort", f.sort);
+    if (!searchRef.current.trim()) return;
 
-      const cacheKey = `/api/search?${params.toString()}`;
-      requestCache.invalidate(cacheKey);
+    const cacheKey = buildCacheKey(0);
+    requestCache.invalidate(cacheKey);
 
-      // Refresh the products
-      offsetRef.current = 0;
-      setLoading(true);
-      fetchProducts(true);
-      setRefreshKey((prev) => prev + 1);
-    }
-  }, [limit, fetchProducts]);
+    offsetRef.current = 0;
+    setLoading(true);
+    fetchProducts(true);
+    setRefreshKey((prev) => prev + 1);
+  }, [buildCacheKey, fetchProducts]);
 
   const handleFilterChange = useCallback(
     (newFilters) => {
@@ -257,7 +256,6 @@ const Store = () => {
 
       setShowSuggestions(false);
 
-      // Debounce search with longer delay to prevent rapid requests
       searchTimeoutRef.current = setTimeout(() => {
         offsetRef.current = 0;
         setLoading(true);
@@ -347,7 +345,6 @@ const Store = () => {
     }
   }, [selectedListId, selectedProduct, lists, isLinkedChild, quantity, notify]);
 
-  // Memoize ProductList props to prevent unnecessary re-renders
   const productListProps = useMemo(
     () => ({
       products,
@@ -358,7 +355,7 @@ const Store = () => {
       loadMore,
       loading,
       searchQuery,
-      refreshKey, // Add refreshKey to trigger re-renders when needed
+      refreshKey,
     }),
     [
       products,
@@ -376,7 +373,6 @@ const Store = () => {
   return (
     <div className="page-fade-in" dir="rtl">
       <div className="container py-4">
-        {/* Header */}
         <div className="text-center mb-4">
           <h2 className="fw-bold mb-2">חיפוש מוצרים</h2>
           <p
@@ -400,10 +396,9 @@ const Store = () => {
           loading={loading}
           onFocus={() => !searchQuery && setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-          onRefresh={refreshSearch} // Pass refresh callback to header
+          onRefresh={refreshSearch}
         />
 
-        {/* Success */}
         {successMsg && (
           <div
             style={{
@@ -426,14 +421,12 @@ const Store = () => {
           </div>
         )}
 
-        {/* Loading */}
         {loading && products.length === 0 && (
           <div className="text-center py-5">
             <div className="sc-spinner" style={{ margin: "0 auto" }}></div>
           </div>
         )}
 
-        {/* Before search */}
         {!searched && !loading && products.length === 0 && (
           <div className="text-center py-5" style={{ opacity: 0.5 }}>
             <i
@@ -449,7 +442,6 @@ const Store = () => {
           </div>
         )}
 
-        {/* No results */}
         {searched && !loading && products.length === 0 && (
           <div className="text-center py-5">
             <i
@@ -467,7 +459,6 @@ const Store = () => {
           </div>
         )}
 
-        {/* Filter bar — shown once the user has searched at least once. */}
         {searched && <ProductFilter onFilterChange={handleFilterChange} />}
 
         {products.length > 0 && <ProductList {...productListProps} />}

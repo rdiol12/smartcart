@@ -1,24 +1,29 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import socket from "../socket";
 import { useNotify } from "../context/NotifyContext";
+import { AuthContext } from "../context/AuthContext";
 
 const NotificationBell = () => {
   const navigate = useNavigate();
   const notify = useNotify();
+  const { user } = useContext(AuthContext);
   const [requests, setRequests] = useState([]);
   const [open, setOpen] = useState(false);
   const panelRef = useRef(null);
 
   useEffect(() => {
+    // Don't fetch until we have a logged-in parent — guards against the
+    // brief window after login where the component mounts before the access
+    // token is written into the api instance.
+    if (!user || user.parent_id !== null) return;
+
     const fetchPending = async () => {
       try {
         const { data } = await api.get("/api/family/kid-requests/pending");
         setRequests(data.requests);
       } catch (err) {
-        // Pending-request poll runs on mount; skip notify on 401 (no session
-        // yet) but surface real failures so the bell doesn't silently empty.
         if (err.response?.status !== 401) {
           notify(err.response?.data?.message || "שגיאה בטעינת בקשות");
         }
@@ -31,7 +36,7 @@ const NotificationBell = () => {
     };
     socket.on("new_kid_request", onNewRequest);
     return () => socket.off("new_kid_request", onNewRequest);
-  }, [notify]);
+  }, [user, notify]);
 
   // Close panel on outside click
   useEffect(() => {
@@ -46,11 +51,9 @@ const NotificationBell = () => {
 
   const handleResolve = async (requestId, action) => {
     try {
-      await api.post(`/api/family/kid-requests/${requestId}/resolve`, { action });
-      // The server-side new_kid_request emit historically published both
-      // `id` and `requestId` for the same value (plus snake/camelCase pairs
-      // on every other field). The REST GET /pending and resolve responses
-      // canonically use `id`, so trust that here and stop dual-keying.
+      await api.post(`/api/family/kid-requests/${requestId}/resolve`, {
+        action,
+      });
       setRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (err) {
       notify(err.response?.data?.message || "שגיאה בעדכון הבקשה");
@@ -81,12 +84,34 @@ const NotificationBell = () => {
 
       {open && (
         <div className="sc-notification-panel">
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--sc-border)", fontWeight: 600, fontSize: "0.9rem" }}>
+          <div
+            style={{
+              padding: "12px 16px",
+              borderBottom: "1px solid var(--sc-border)",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+            }}
+          >
             בקשות ממתינות ({count})
           </div>
           {requests.length === 0 ? (
-            <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--sc-text-muted)", fontSize: "0.85rem" }}>
-              <i className="bi bi-bell-slash" style={{ fontSize: "1.5rem", display: "block", marginBottom: "8px", opacity: 0.4 }}></i>
+            <div
+              style={{
+                padding: "24px 16px",
+                textAlign: "center",
+                color: "var(--sc-text-muted)",
+                fontSize: "0.85rem",
+              }}
+            >
+              <i
+                className="bi bi-bell-slash"
+                style={{
+                  fontSize: "1.5rem",
+                  display: "block",
+                  marginBottom: "8px",
+                  opacity: 0.4,
+                }}
+              ></i>
               אין בקשות ממתינות
             </div>
           ) : (
@@ -103,29 +128,48 @@ const NotificationBell = () => {
                 <div className="sc-notification-item" key={id}>
                   <div
                     style={{
-                      flex: 1, fontSize: "0.85rem",
+                      flex: 1,
+                      fontSize: "0.85rem",
                       cursor: productId ? "pointer" : "default",
-                      borderRadius: "8px", padding: "4px 6px", margin: "-4px -6px",
+                      borderRadius: "8px",
+                      padding: "4px 6px",
+                      margin: "-4px -6px",
                       transition: "background 0.15s ease",
                     }}
                     onClick={() => handleItemClick(req)}
-                    onMouseEnter={(e) => { if (productId) e.currentTarget.style.background = "rgba(99,102,241,0.04)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      if (productId)
+                        e.currentTarget.style.background =
+                          "rgba(99,102,241,0.04)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
                   >
                     <div className="d-flex align-items-center gap-2 mb-1">
                       <strong>{childName}</strong>
                       {productId && (
-                        <span className="sc-badge sc-badge-primary" style={{ fontSize: "0.65rem", padding: "2px 6px" }}>
+                        <span
+                          className="sc-badge sc-badge-primary"
+                          style={{ fontSize: "0.65rem", padding: "2px 6px" }}
+                        >
                           <i className="bi bi-box-seam me-1"></i>פרטי מוצר
                         </span>
                       )}
                     </div>
                     <div>
                       רוצה להוסיף <strong>{itemName}</strong>
-                      {qty > 1 && <span> (x{qty})</span>} לרשימה <strong>{listName}</strong>
+                      {qty > 1 && <span> (x{qty})</span>} לרשימה{" "}
+                      <strong>{listName}</strong>
                     </div>
                     {price && (
-                      <div style={{ color: "var(--sc-text-muted)", fontSize: "0.75rem", marginTop: "2px" }}>
+                      <div
+                        style={{
+                          color: "var(--sc-text-muted)",
+                          fontSize: "0.75rem",
+                          marginTop: "2px",
+                        }}
+                      >
                         <i className="bi bi-tag me-1"></i>₪{price}
                       </div>
                     )}
@@ -133,17 +177,29 @@ const NotificationBell = () => {
                   <div className="d-flex gap-1" style={{ flexShrink: 0 }}>
                     <button
                       className="sc-icon-btn"
-                      onClick={(e) => { e.stopPropagation(); handleResolve(id, "approve"); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResolve(id, "approve");
+                      }}
                       title="אשר"
-                      style={{ color: "var(--sc-success)", background: "rgba(16,185,129,0.1)" }}
+                      style={{
+                        color: "var(--sc-success)",
+                        background: "rgba(16,185,129,0.1)",
+                      }}
                     >
                       <i className="bi bi-check-lg"></i>
                     </button>
                     <button
                       className="sc-icon-btn"
-                      onClick={(e) => { e.stopPropagation(); handleResolve(id, "reject"); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResolve(id, "reject");
+                      }}
                       title="דחה"
-                      style={{ color: "var(--sc-danger)", background: "rgba(239,68,68,0.1)" }}
+                      style={{
+                        color: "var(--sc-danger)",
+                        background: "rgba(239,68,68,0.1)",
+                      }}
                     >
                       <i className="bi bi-x-lg"></i>
                     </button>
