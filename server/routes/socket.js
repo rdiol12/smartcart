@@ -30,6 +30,7 @@ const EVENTS = {
     "update_quantity",
     "mark_paid",
     "unmark_paid",
+    "add_comment",
   ]),
 
   MUTATION: new Set([
@@ -40,6 +41,7 @@ const EVENTS = {
     "mark_paid",
     "unmark_paid",
     "create_list",
+    "add_comment",
   ]),
 };
 
@@ -444,61 +446,19 @@ export default function registerSocketHandlers(io) {
       }
     });
 
-     socket.on("create_list", async (list, callback) => {
-      const validated = parseSocketPayload(
-        socket,
-        createListSchema,
-        list,
-        callback,
-        "create_list",
-      );
-      if (!validated) return;
-      const { list_name } = validated;
-      // Always use the authenticated user — never trust client-supplied userId
-      const userId = socket.user.id;
-
-      const client = await db.connect();
+    // Unmark item as paid
+    socket.on("unmark_paid", async (data) => {
       try {
-        await client.query("BEGIN");
-        await assertNotChild(userId);
+        const { itemId, listId } = data;
 
-        const listRes = await client.query(
-          "INSERT INTO app.list (list_name) VALUES ($1) RETURNING id",
-          [list_name],
-        );
-        const newListId = listRes.rows[0].id;
-
-        await client.query(
-          "INSERT INTO app.list_members (list_id, user_id, status) VALUES ($1, $2, $3)",
-          [newListId, userId, "admin"],
-        );
-        await client.query("COMMIT");
-        callback({ success: true, listId: newListId });
-      } catch (e) {
-        await client.query("ROLLBACK");
-        if (e.code === "IS_CHILD") {
-          return callback({
-            success: false,
-            error: "Child accounts cannot create lists",
+        if (!itemId || !listId) {
+          socket.emit("error", {
+            message: "Missing itemId or listId",
+            code: "MISSING_PARAMS",
           });
+          return;
         }
-        if (e.code === "USER_NOT_FOUND") {
-          return callback({ success: false, error: "User not found" });
-        }
-        logger.error("Create list error", { error: e.message, stack: e.stack });
-        callback({ success: false, error: "Database error" });
-      } finally {
-        client.release();
-      }
-    });
 
-    socket.on("add_comment", async (data) => {
-      const validated = parseSocketPayload(socket, addCommentSchema, data);
-      if (!validated) return;
-      const { itemId, listId, comment } = validated;
-      const userId = socket.user.id;
-      try {
-        await assertMember(listId, userId);
         const result = await db.query(
           `UPDATE app.list_items 
            SET paid_by = NULL, paid_at = NULL 
@@ -517,6 +477,8 @@ export default function registerSocketHandlers(io) {
 
         io.to(String(listId)).emit("item_unpaid", {
           itemId,
+          unpaid_by: socket.user.id,
+          unpaid_at: new Date().toISOString(),
         });
 
         // Log activity
@@ -540,6 +502,49 @@ export default function registerSocketHandlers(io) {
         socket.emit("error", {
           message: "Failed to unmark as paid",
           code: "UNMARK_PAID_FAILED",
+        });
+      }
+    });
+
+    socket.on("add_comment", async (data) => {
+      try {
+        const v = parseSocketPayload(socket, addCommentSchema, data);
+        if (!v) return;
+
+        const { itemId, listId, comment } = v;
+
+        const result = await db.query(
+          `UPDATE app.list_items
+           SET note = $1, note_by = $2, updatedat = NOW()
+           WHERE id = $3 AND listid = $4
+           RETURNING id`,
+          [comment, socket.user.id, itemId, listId],
+        );
+
+        if (result.rowCount === 0) {
+          socket.emit("error", {
+            message: "Item not found",
+            code: "ITEM_NOT_FOUND",
+          });
+          return;
+        }
+
+        io.to(String(listId)).emit("comment_updated", {
+          itemId,
+          comment,
+          updatedBy: socket.user.id,
+          updatedAt: new Date().toISOString(),
+        });
+
+        logger.debug("Note added", { itemId, listId, userId: socket.user.id });
+      } catch (err) {
+        logger.error("add_comment error", {
+          error: err.message,
+          userId: socket.user.id,
+        });
+        socket.emit("error", {
+          message: "Failed to add comment",
+          code: "ADD_COMMENT_FAILED",
         });
       }
     });
