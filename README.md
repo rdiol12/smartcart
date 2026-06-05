@@ -4,6 +4,8 @@ The backend is hosted on Render's free tier, which spins down after
 15 minutes of inactivity. The first request after idle may take up to 
 60 seconds while the server cold-starts. Subsequent requests are normal speed.
 
+i use public api for items images if the api don't return an img a ganeric  will be displayed insted 
+
 # SmartCart
 
 A collaborative shopping-list app backed by a live feed of Israeli supermarket prices.
