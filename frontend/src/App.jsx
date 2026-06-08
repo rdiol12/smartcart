@@ -19,6 +19,7 @@ import ListDetail from "./pages/ListDetail";
 import JoinList from "./pages/JoinList";
 import Templates from "./pages/Templates";
 import FamilySettings from "./pages/FamilySettings";
+import { Analytics } from "@vercel/analytics/react";
 
 function App() {
   return (
@@ -55,6 +56,7 @@ function App() {
             <Route path="/templates" element={<PrivateRoute parentOnly><Templates /></PrivateRoute>} />
             <Route path="/family" element={<PrivateRoute parentOnly><FamilySettings /></PrivateRoute>} />
           </Routes>
+          <Analytics />
         </BrowserRouter>
         </AuthProvider>
       </NotifyProvider>
