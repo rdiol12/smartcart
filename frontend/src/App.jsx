@@ -20,7 +20,7 @@ import JoinList from "./pages/JoinList";
 import Templates from "./pages/Templates";
 import FamilySettings from "./pages/FamilySettings";
 import { Analytics } from "@vercel/analytics/react";
-
+import { SpeedInsights } from "@vercel/speed-insights/react";
 function App() {
   return (
     <ThemeProvider>
@@ -57,6 +57,7 @@ function App() {
             <Route path="/family" element={<PrivateRoute parentOnly><FamilySettings /></PrivateRoute>} />
           </Routes>
           <Analytics />
+          <SpeedInsights />
         </BrowserRouter>
         </AuthProvider>
       </NotifyProvider>
