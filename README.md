@@ -258,3 +258,11 @@ Only used by `npm run dev` outside Docker.
 | Variable        | Example                  | Notes                                                                                              |
 | --------------- | ------------------------ | -------------------------------------------------------------------------------------------------- |
 | `VITE_API_URL`  | `http://localhost:8000`  | Origin of the API the dev server should hit. Inside Docker, this same variable lives in repo-root `.env` and is passed in as a build arg instead. |
+
+---
+
+## Support ☕
+
+If my work saves you time, you can fuel the next project:
+
+<a href="https://www.buymeacoffee.com/rdiol12" target="_blank"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me A Coffee" height="32"></a>
